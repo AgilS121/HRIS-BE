@@ -25,6 +25,7 @@ route GET "/health" -> respond map {
 
 import auth/routes
 import master/routes
+import master/roles_routes
 import hr/routes
 
 -- NOTE: Feel parser only accepts a NUMBER literal after `on`, not an expression.

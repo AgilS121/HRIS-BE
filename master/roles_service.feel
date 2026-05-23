@@ -1,0 +1,65 @@
+-- master/roles_service.feel — RBAC roles + menu permission business logic.
+
+import config
+
+define list_roles taking company_id ->
+  db.query(config.conn,
+    "SELECT r.*, COUNT(rm.menu_key) AS menu_count FROM auth_roles r LEFT JOIN auth_role_menus rm ON r.id = rm.role_id WHERE r.company_id = ? AND r.is_active = 1 GROUP BY r.id ORDER BY r.name",
+    [company_id])
+
+define find_role taking id ->
+  db.query_one(config.conn,
+    "SELECT * FROM auth_roles WHERE id = ?",
+    [id])
+
+define get_role_menus taking role_id ->
+  db.query(config.conn,
+    "SELECT menu_key, can_view, can_create, can_edit, can_delete FROM auth_role_menus WHERE role_id = ?",
+    [role_id])
+
+define create_role taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO auth_roles (company_id, name, description) VALUES (?, ?, ?)",
+      [d.company_id, d.name, map.get(d, "description", nothing)])
+    db.last_id(config.conn)
+  }
+
+define update_role taking d ->
+  db.exec(config.conn,
+    "UPDATE auth_roles SET name=?, description=?, updated_at=NOW() WHERE id=?",
+    [d.name, map.get(d, "description", nothing), d.id])
+
+define delete_role taking id ->
+  db.exec(config.conn,
+    "UPDATE auth_roles SET is_active=0 WHERE id=?",
+    [id])
+
+-- Replace all menu permissions for a role.
+-- d.role_id + d.menus = list of { menu_key, can_view, can_create, can_edit, can_delete }
+define set_role_menus taking d ->
+  do {
+    db.exec(config.conn,
+      "DELETE FROM auth_role_menus WHERE role_id = ?",
+      [d.role_id])
+    for m in d.menus -> do {
+      when map.get(m, "can_view", false) or map.get(m, "can_create", false) or map.get(m, "can_edit", false) or map.get(m, "can_delete", false) ->
+        db.exec(config.conn,
+          "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, ?, ?, ?, ?, ?)",
+          [d.role_id, m.menu_key, map.get(m, "can_view", false), map.get(m, "can_create", false), map.get(m, "can_edit", false), map.get(m, "can_delete", false)])
+      otherwise -> nothing
+    }
+  }
+
+-- Get menus accessible by a user (via their role).
+-- If user has no role: return nothing (caller treats as superadmin → all menus).
+define get_user_menus taking user_id ->
+  db.query(config.conn,
+    "SELECT rm.menu_key, rm.can_view, rm.can_create, rm.can_edit, rm.can_delete FROM auth_users u JOIN auth_roles r ON u.role_id = r.id JOIN auth_role_menus rm ON rm.role_id = r.id WHERE u.id = ? AND r.is_active = 1 AND rm.can_view = 1",
+    [user_id])
+
+-- Assign role to a user
+define assign_user_role taking d ->
+  db.exec(config.conn,
+    "UPDATE auth_users SET role_id = ? WHERE id = ?",
+    [d.role_id, d.user_id])

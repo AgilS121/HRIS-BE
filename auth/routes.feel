@@ -5,6 +5,7 @@ import config
 import shared/response
 import shared/auth_middleware
 import auth/service
+import master/roles_service
 
 -- POST /api/auth/login — verify credentials, issue JWT
 route POST "/api/auth/login" -> do {
@@ -47,4 +48,12 @@ route GET "/api/auth/me" -> do {
 route POST "/api/auth/logout" -> do {
   let claims = auth_middleware.require_auth(request)
   respond response.ok(map { message: "logged out" })
+}
+
+-- GET /api/auth/my-menus — return permitted menus for current user.
+-- If user has no role assigned, returns empty list (frontend treats as superadmin → show all).
+route GET "/api/auth/my-menus" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let menus  = roles_service.get_user_menus(claims.user_id)
+  respond response.ok(menus)
 }

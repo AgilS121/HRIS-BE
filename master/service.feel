@@ -37,26 +37,26 @@ define delete_company taking id ->
 
 define list_departments taking company_id ->
   db.query(config.conn,
-    "SELECT d.*, p.name AS parent_name FROM master_departments d LEFT JOIN master_departments p ON d.parent_id = p.id WHERE d.company_id = ? AND d.is_active = 1 ORDER BY d.name",
+    "SELECT d.*, p.name AS parent_name, r.name AS default_role_name FROM master_departments d LEFT JOIN master_departments p ON d.parent_id = p.id LEFT JOIN auth_roles r ON d.default_role_id = r.id WHERE d.company_id = ? AND d.is_active = 1 ORDER BY d.name",
     [company_id])
 
 define find_department taking id ->
   db.query_one(config.conn,
-    "SELECT * FROM master_departments WHERE id = ?",
+    "SELECT d.*, r.name AS default_role_name FROM master_departments d LEFT JOIN auth_roles r ON d.default_role_id = r.id WHERE d.id = ?",
     [id])
 
 define create_department taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO master_departments (company_id, name, code, parent_id) VALUES (?, ?, ?, ?)",
-      [d.company_id, d.name, map.get(d, "code", nothing), map.get(d, "parent_id", nothing)])
+      "INSERT INTO master_departments (company_id, name, code, parent_id, default_role_id) VALUES (?, ?, ?, ?, ?)",
+      [d.company_id, d.name, map.get(d, "code", nothing), map.get(d, "parent_id", nothing), map.get(d, "default_role_id", nothing)])
     db.last_id(config.conn)
   }
 
 define update_department taking d ->
   db.exec(config.conn,
-    "UPDATE master_departments SET name=?, code=?, parent_id=?, updated_at=NOW() WHERE id=?",
-    [d.name, map.get(d, "code", nothing), map.get(d, "parent_id", nothing), d.id])
+    "UPDATE master_departments SET name=?, code=?, parent_id=?, default_role_id=?, updated_at=NOW() WHERE id=?",
+    [d.name, map.get(d, "code", nothing), map.get(d, "parent_id", nothing), map.get(d, "default_role_id", nothing), d.id])
 
 define delete_department taking id ->
   db.exec(config.conn,

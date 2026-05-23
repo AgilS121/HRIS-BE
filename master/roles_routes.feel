@@ -1,0 +1,74 @@
+-- master/roles_routes.feel — CRUD for roles + permission matrix.
+
+import shared/response
+import shared/auth_middleware
+import master/roles_service
+
+route GET "/api/master/roles" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(roles_service.list_roles(company_id))
+}
+
+route GET "/api/master/roles/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let role   = roles_service.find_role(id)
+  when role == nothing
+    -> respond 404 response.not_found("role")
+    otherwise -> do {
+      let menus = roles_service.get_role_menus(id)
+      respond response.ok(map { role: role, menus: menus })
+    }
+}
+
+route POST "/api/master/roles" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.name == nothing
+    -> respond 400 response.bad_request("company_id and name are required")
+    otherwise -> do {
+      let new_id = roles_service.create_role(body)
+      when body.menus != nothing ->
+        roles_service.set_role_menus(map { role_id: new_id, menus: body.menus })
+      otherwise -> nothing
+      respond 201 response.ok(roles_service.find_role(new_id))
+    }
+}
+
+route PUT "/api/master/roles/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let role   = roles_service.find_role(id)
+  when role == nothing
+    -> respond 404 response.not_found("role")
+    otherwise -> do {
+      let d = map { id: id, name: body.name, description: body.description }
+      roles_service.update_role(d)
+      when body.menus != nothing ->
+        roles_service.set_role_menus(map { role_id: id, menus: body.menus })
+      otherwise -> nothing
+      respond response.ok(roles_service.find_role(id))
+    }
+}
+
+route DELETE "/api/master/roles/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let role   = roles_service.find_role(id)
+  when role == nothing
+    -> respond 404 response.not_found("role")
+    otherwise -> do {
+      roles_service.delete_role(id)
+      respond response.ok(map { message: "role deleted" })
+    }
+}
+
+-- Assign role to a user
+route PUT "/api/master/users/:id/role" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.role_id == nothing
+    -> respond 400 response.bad_request("role_id is required")
+    otherwise -> do {
+      roles_service.assign_user_role(map { user_id: id, role_id: body.role_id })
+      respond response.ok(map { message: "role assigned" })
+    }
+}
