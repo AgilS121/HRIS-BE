@@ -16,8 +16,8 @@ route GET "/api/hr/employees" -> do {
 
 route POST "/api/hr/employees" -> do {
   let claims = auth_middleware.require_auth(request)
-  when body.company_id == nothing or body.name == nothing or body.employee_number == nothing or body.hire_date == nothing
-    -> respond 400 response.bad_request("company_id, name, employee_number, hire_date are required")
+  when body.company_id == nothing or body.full_name == nothing or body.employee_no == nothing or body.join_date == nothing
+    -> respond 400 response.bad_request("company_id, full_name, employee_no, join_date are required")
     otherwise -> do {
       let new_id = service.create_employee(body)
       respond 201 response.ok(service.find_employee(new_id))
@@ -38,14 +38,14 @@ route PUT "/api/hr/employees/:id" -> do {
   when employee == nothing
     -> respond 404 response.not_found("employee")
     otherwise -> do {
-      when body.name == nothing
-        -> respond 400 response.bad_request("name is required")
+      when body.full_name == nothing
+        -> respond 400 response.bad_request("full_name is required")
         otherwise -> do {
           let d = map {
             id:              id,
             department_id:   body.department_id,
             position_id:     body.position_id,
-            name:            body.name,
+            full_name:       body.full_name,
             email:           body.email,
             phone:           body.phone,
             employment_type: body.employment_type
@@ -76,7 +76,7 @@ route POST "/api/hr/attendance/clock-in" -> do {
     -> respond 400 response.bad_request("employee_id is required")
     otherwise -> do {
       let existing = service.get_today_attendance(employee_id)
-      when existing != nothing
+      when existing != nothing and existing.clock_in_at != nothing
         -> respond 409 response.conflict("already clocked in today")
         otherwise -> do {
           let d = map { employee_id: employee_id, lat: body.lat, lng: body.lng, note: body.note }
@@ -96,12 +96,16 @@ route POST "/api/hr/attendance/clock-out" -> do {
       when existing == nothing
         -> respond 404 response.not_found("clock-in record for today")
         otherwise -> do {
-          when existing.clock_out != nothing
-            -> respond 409 response.conflict("already clocked out today")
+          when existing.clock_in_at == nothing
+            -> respond 409 response.conflict("not clocked in today")
             otherwise -> do {
-              let d = map { attendance_id: existing.id, lat: body.lat, lng: body.lng }
-              service.clock_out(d)
-              respond response.ok(map { message: "clock-out recorded" })
+              when existing.clock_out_at != nothing
+                -> respond 409 response.conflict("already clocked out today")
+                otherwise -> do {
+                  let d = map { employee_id: employee_id, lat: body.lat, lng: body.lng }
+                  service.clock_out(d)
+                  respond response.ok(map { message: "clock-out recorded" })
+                }
             }
         }
     }

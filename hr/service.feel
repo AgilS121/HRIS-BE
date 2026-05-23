@@ -7,7 +7,7 @@ import config
 
 define list_employees taking company_id ->
   db.query(config.conn,
-    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.company_id = ? AND e.status != 'terminated' ORDER BY e.name",
+    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.company_id = ? AND e.status NOT IN ('resigned','terminated') ORDER BY e.full_name",
     [company_id])
 
 define find_employee taking id ->
@@ -18,18 +18,20 @@ define find_employee taking id ->
 define create_employee taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO hr_employees (company_id, department_id, position_id, employee_number, name, email, phone, hire_date, employment_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [d.company_id, d.department_id, d.position_id, d.employee_number, d.name,
+      "INSERT INTO hr_employees (company_id, department_id, position_id, employee_no, full_name, gender, email, phone, join_date, employment_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [d.company_id, d.department_id, d.position_id, d.employee_no, d.full_name,
+       map.get(d, "gender", "M"),
        map.get(d, "email", nothing), map.get(d, "phone", nothing),
-       d.hire_date, map.get(d, "employment_type", "permanent")])
+       d.join_date, map.get(d, "employment_type", "permanent")])
     db.last_id(config.conn)
   }
 
 define update_employee taking d ->
   db.exec(config.conn,
-    "UPDATE hr_employees SET department_id=?, position_id=?, name=?, email=?, phone=?, employment_type=?, updated_at=NOW() WHERE id=?",
-    [d.department_id, d.position_id, d.name, map.get(d, "email", nothing),
-     map.get(d, "phone", nothing), map.get(d, "employment_type", "permanent"), d.id])
+    "UPDATE hr_employees SET department_id=?, position_id=?, full_name=?, email=?, phone=?, employment_type=?, updated_at=NOW() WHERE id=?",
+    [d.department_id, d.position_id, d.full_name,
+     map.get(d, "email", nothing), map.get(d, "phone", nothing),
+     map.get(d, "employment_type", "permanent"), d.id])
 
 define terminate_employee taking id ->
   db.exec(config.conn,
@@ -40,25 +42,25 @@ define terminate_employee taking id ->
 
 define get_today_attendance taking employee_id ->
   db.query_one(config.conn,
-    "SELECT * FROM hr_attendance WHERE employee_id = ? AND DATE(clock_in) = CURDATE()",
+    "SELECT * FROM hr_attendance WHERE employee_id = ? AND work_date = CURDATE()",
     [employee_id])
 
 define clock_in taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO hr_attendance (employee_id, clock_in, clock_in_lat, clock_in_lng, note) VALUES (?, NOW(), ?, ?, ?)",
+      "INSERT INTO hr_attendance (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, note) VALUES (?, CURDATE(), NOW(), ?, ?, ?)",
       [d.employee_id, map.get(d, "lat", nothing), map.get(d, "lng", nothing), map.get(d, "note", nothing)])
     db.last_id(config.conn)
   }
 
 define clock_out taking d ->
   db.exec(config.conn,
-    "UPDATE hr_attendance SET clock_out=NOW(), clock_out_lat=?, clock_out_lng=?, work_minutes=TIMESTAMPDIFF(MINUTE, clock_in, NOW()) WHERE id=? AND clock_out IS NULL",
-    [map.get(d, "lat", nothing), map.get(d, "lng", nothing), d.attendance_id])
+    "UPDATE hr_attendance SET clock_out_at=NOW(), clock_out_lat=?, clock_out_lng=?, updated_at=NOW() WHERE employee_id=? AND work_date=CURDATE() AND clock_in_at IS NOT NULL AND clock_out_at IS NULL",
+    [map.get(d, "lat", nothing), map.get(d, "lng", nothing), d.employee_id])
 
 define list_attendance taking d ->
   db.query(config.conn,
-    "SELECT a.*, e.name AS employee_name FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE e.company_id = ? AND DATE(a.clock_in) BETWEEN ? AND ? ORDER BY a.clock_in DESC",
+    "SELECT a.*, e.full_name AS employee_name FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE e.company_id = ? AND a.work_date BETWEEN ? AND ? ORDER BY a.work_date DESC, e.full_name",
     [d.company_id, d.date_from, d.date_to])
 
 -- ─── Leave ───────────────────────────────────────────────────────────────────
@@ -75,7 +77,7 @@ define get_leave_balance taking d ->
 
 define list_leave_requests taking d ->
   db.query(config.conn,
-    "SELECT r.*, e.name AS employee_name, lt.name AS leave_type_name FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE e.company_id = ? ORDER BY r.created_at DESC",
+    "SELECT r.*, e.full_name AS employee_name, lt.name AS leave_type_name FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE e.company_id = ? ORDER BY r.created_at DESC",
     [d.company_id])
 
 define find_leave_request taking id ->
