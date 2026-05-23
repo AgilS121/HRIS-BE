@@ -459,7 +459,24 @@ route POST "/api/hr/leave-requests" -> do {
   when body.employee_id == nothing or body.leave_type_id == nothing or body.start_date == nothing or body.end_date == nothing or body.total_days == nothing
     -> respond 400 response.bad_request("employee_id, leave_type_id, start_date, end_date, total_days are required")
     otherwise -> do {
-      let new_id = service.create_leave_request(body)
+      let f = map.get(files, "attachment", nothing)
+      let attachment_path = when f != nothing
+        -> do {
+          let filename  = "leave_{body.employee_id}_{f.filename}"
+          let save_path = "uploads/leave-docs/{filename}"
+          f.save_to(save_path)
+          save_path
+        }
+        otherwise -> nothing
+      let new_id = service.create_leave_request(map {
+        employee_id:     body.employee_id,
+        leave_type_id:   body.leave_type_id,
+        start_date:      body.start_date,
+        end_date:        body.end_date,
+        total_days:      body.total_days,
+        reason:          body.reason,
+        attachment_path: attachment_path
+      })
       respond 201 response.ok(service.find_leave_request(new_id))
     }
 }
