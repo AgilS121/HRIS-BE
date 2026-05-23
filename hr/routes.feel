@@ -128,6 +128,26 @@ route PUT "/api/hr/employees/:id/full" -> do {
     }
 }
 
+-- GET /api/hr/employees/:id/contract — return contract file URL + metadata
+route GET "/api/hr/employees/:id/contract" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee(id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee")
+    otherwise -> do {
+      when employee.contract_file == nothing
+        -> respond 404 response.not_found("contract file")
+        otherwise -> respond response.ok(map {
+          url:             "/" + employee.contract_file,
+          contract_number: employee.contract_number,
+          contract_start:  employee.contract_start,
+          contract_end:    employee.contract_end,
+          contract_months: employee.contract_months,
+          filename:        employee.contract_file
+        })
+    }
+}
+
 -- POST /api/hr/employees/:id/contract — upload contract file (multipart/form-data)
 -- Form fields: contract (file), contract_number, contract_start, contract_end, contract_months
 -- File is saved to uploads/contracts/ — ensure this directory exists on the server.
@@ -141,8 +161,8 @@ route POST "/api/hr/employees/:id/contract" -> do {
       when f == nothing
         -> respond 400 response.bad_request("contract file is required")
         otherwise -> do {
-          let filename  = "contract_" + str(id) + "_" + f.filename
-          let save_path = "uploads/contracts/" + filename
+          let filename  = "contract_{id}_{f.filename}"
+          let save_path = "uploads/contracts/{filename}"
           f.save_to(save_path)
           let d = map {
             id:              id,

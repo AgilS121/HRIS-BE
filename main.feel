@@ -28,6 +28,8 @@ import master/routes
 import master/roles_routes
 import hr/routes
 
+-- Serve uploaded contract files: /uploads/contracts/filename.pdf
+static "/uploads" -> "./uploads"
+
 -- NOTE: Feel parser only accepts a NUMBER literal after `on`, not an expression.
--- Fix: serve on config.port cors — tracked as future improvement.
 serve on 3000 cors
