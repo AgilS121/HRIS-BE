@@ -102,3 +102,94 @@ define reject_leave_request taking d ->
   db.exec(config.conn,
     "UPDATE hr_leave_requests SET status='rejected', approved_by=?, approved_at=NOW(), rejection_note=?, updated_at=NOW() WHERE id=? AND status='pending'",
     [d.approver_id, map.get(d, "note", nothing), d.id])
+
+-- ─── Employee Number Generation ───────────────────────────────────────────────
+-- Format: {DEPT_CODE}-{YEAR}{3-digit-seq}  e.g. IT-2026001, HR-2026002
+
+define generate_employee_no taking department_id ->
+  do {
+    let yr_row = db.query_one(config.conn, "SELECT YEAR(NOW()) AS y", [])
+    let year   = yr_row.y
+    let dept   = db.query_one(config.conn,
+                   "SELECT code FROM master_departments WHERE id = ?",
+                   [department_id])
+    let prefix = when dept != nothing -> dept.code otherwise -> "EMP"
+    db.exec(config.conn,
+      "INSERT INTO hr_employee_no_seq (department_id, year, last_seq) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE last_seq = last_seq + 1",
+      [department_id, year])
+    let seq_row = db.query_one(config.conn,
+                    "SELECT last_seq FROM hr_employee_no_seq WHERE department_id = ? AND year = ?",
+                    [department_id, year])
+    let seq     = seq_row.last_seq
+    let seq_str = when seq < 10 -> "00{seq}"
+                  otherwise -> when seq < 100 -> "0{seq}"
+                  otherwise -> "{seq}"
+    "{prefix}-{year}{seq_str}"
+  }
+
+-- ─── Employee Full CRUD ───────────────────────────────────────────────────────
+
+define create_employee_full taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_employees (company_id, department_id, position_id, employee_no, full_name, nickname, gender, email, phone, birth_place, birth_date, national_id, tax_id, marital_status, address, join_date, employment_type, contract_number, contract_start, contract_end, contract_months, bank_name, bank_account_no, bank_account_name, salary_grade, basic_salary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [d.company_id, d.department_id, d.position_id, d.employee_no, d.full_name,
+       map.get(d, "nickname", nothing),
+       map.get(d, "gender", "M"),
+       map.get(d, "email", nothing),
+       map.get(d, "phone", nothing),
+       map.get(d, "birth_place", nothing),
+       map.get(d, "birth_date", nothing),
+       map.get(d, "national_id", nothing),
+       map.get(d, "tax_id", nothing),
+       map.get(d, "marital_status", "single"),
+       map.get(d, "address", nothing),
+       d.join_date,
+       map.get(d, "employment_type", "permanent"),
+       map.get(d, "contract_number", nothing),
+       map.get(d, "contract_start", nothing),
+       map.get(d, "contract_end", nothing),
+       map.get(d, "contract_months", nothing),
+       map.get(d, "bank_name", nothing),
+       map.get(d, "bank_account_no", nothing),
+       map.get(d, "bank_account_name", nothing),
+       map.get(d, "salary_grade", nothing),
+       map.get(d, "basic_salary", nothing)])
+    db.last_id(config.conn)
+  }
+
+define update_employee_full taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_employees SET department_id=?, position_id=?, full_name=?, nickname=?, email=?, phone=?, gender=?, birth_place=?, birth_date=?, national_id=?, tax_id=?, marital_status=?, address=?, employment_type=?, contract_number=?, contract_start=?, contract_end=?, contract_months=?, bank_name=?, bank_account_no=?, bank_account_name=?, salary_grade=?, basic_salary=?, updated_at=NOW() WHERE id=?",
+    [d.department_id, d.position_id, d.full_name,
+     map.get(d, "nickname", nothing),
+     map.get(d, "email", nothing),
+     map.get(d, "phone", nothing),
+     map.get(d, "gender", "M"),
+     map.get(d, "birth_place", nothing),
+     map.get(d, "birth_date", nothing),
+     map.get(d, "national_id", nothing),
+     map.get(d, "tax_id", nothing),
+     map.get(d, "marital_status", "single"),
+     map.get(d, "address", nothing),
+     map.get(d, "employment_type", "permanent"),
+     map.get(d, "contract_number", nothing),
+     map.get(d, "contract_start", nothing),
+     map.get(d, "contract_end", nothing),
+     map.get(d, "contract_months", nothing),
+     map.get(d, "bank_name", nothing),
+     map.get(d, "bank_account_no", nothing),
+     map.get(d, "bank_account_name", nothing),
+     map.get(d, "salary_grade", nothing),
+     map.get(d, "basic_salary", nothing),
+     d.id])
+
+define save_contract_file taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_employees SET contract_number=?, contract_start=?, contract_end=?, contract_months=?, contract_file=?, updated_at=NOW() WHERE id=?",
+    [map.get(d, "contract_number", nothing),
+     map.get(d, "contract_start", nothing),
+     map.get(d, "contract_end", nothing),
+     map.get(d, "contract_months", nothing),
+     map.get(d, "contract_file", nothing),
+     d.id])

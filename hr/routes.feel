@@ -67,6 +67,97 @@ route DELETE "/api/hr/employees/:id" -> do {
     }
 }
 
+-- ─── Employee Extended Endpoints ─────────────────────────────────────────────
+
+-- GET /api/hr/employees/next-no?department_id=X
+-- Returns the next auto-generated employee number for a given department.
+route GET "/api/hr/employees/next-no" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let dept_id = map.get(query, "department_id", nothing)
+  when dept_id == nothing
+    -> respond 400 response.bad_request("department_id is required")
+    otherwise -> respond response.ok(map { employee_no: service.generate_employee_no(dept_id) })
+}
+
+-- POST /api/hr/employees/full — create employee with all profile fields
+route POST "/api/hr/employees/full" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.full_name == nothing or body.employee_no == nothing or body.join_date == nothing
+    -> respond 400 response.bad_request("company_id, full_name, employee_no, join_date are required")
+    otherwise -> do {
+      let new_id = service.create_employee_full(body)
+      respond 201 response.ok(service.find_employee(new_id))
+    }
+}
+
+-- PUT /api/hr/employees/:id/full — update employee with all profile fields
+route PUT "/api/hr/employees/:id/full" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee(id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee")
+    otherwise -> do {
+      let d = map {
+        id:                id,
+        department_id:     body.department_id,
+        position_id:       body.position_id,
+        full_name:         body.full_name,
+        nickname:          body.nickname,
+        email:             body.email,
+        phone:             body.phone,
+        gender:            body.gender,
+        birth_place:       body.birth_place,
+        birth_date:        body.birth_date,
+        national_id:       body.national_id,
+        tax_id:            body.tax_id,
+        marital_status:    body.marital_status,
+        address:           body.address,
+        employment_type:   body.employment_type,
+        contract_number:   body.contract_number,
+        contract_start:    body.contract_start,
+        contract_end:      body.contract_end,
+        contract_months:   body.contract_months,
+        bank_name:         body.bank_name,
+        bank_account_no:   body.bank_account_no,
+        bank_account_name: body.bank_account_name,
+        salary_grade:      body.salary_grade,
+        basic_salary:      body.basic_salary
+      }
+      service.update_employee_full(d)
+      respond response.ok(service.find_employee(id))
+    }
+}
+
+-- POST /api/hr/employees/:id/contract — upload contract file (multipart/form-data)
+-- Form fields: contract (file), contract_number, contract_start, contract_end, contract_months
+-- File is saved to uploads/contracts/ — ensure this directory exists on the server.
+route POST "/api/hr/employees/:id/contract" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee(id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee")
+    otherwise -> do {
+      let f = map.get(files, "contract", nothing)
+      when f == nothing
+        -> respond 400 response.bad_request("contract file is required")
+        otherwise -> do {
+          let filename  = "contract_" + str(id) + "_" + f.filename
+          let save_path = "uploads/contracts/" + filename
+          f.save_to(save_path)
+          let d = map {
+            id:              id,
+            contract_number: map.get(body, "contract_number", nothing),
+            contract_start:  map.get(body, "contract_start", nothing),
+            contract_end:    map.get(body, "contract_end", nothing),
+            contract_months: map.get(body, "contract_months", nothing),
+            contract_file:   save_path
+          }
+          service.save_contract_file(d)
+          respond response.ok(map { message: "contract uploaded", path: save_path })
+        }
+    }
+}
+
 -- ─── Attendance ──────────────────────────────────────────────────────────────
 
 route POST "/api/hr/attendance/clock-in" -> do {
