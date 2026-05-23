@@ -14,7 +14,7 @@ define find_user_by_email taking email ->
 define find_user_by_id taking id ->
   db.query_one(
     config.conn,
-    "SELECT id, email, name, is_temp_password, temp_until, TIMESTAMPDIFF(HOUR, NOW(), temp_until) AS hours_remaining FROM auth_users WHERE id = ? AND is_active = 1",
+    "SELECT id, email, password_hash, name, is_temp_password, temp_until, TIMESTAMPDIFF(HOUR, NOW(), temp_until) AS hours_remaining FROM auth_users WHERE id = ? AND is_active = 1",
     [id]
   )
 
