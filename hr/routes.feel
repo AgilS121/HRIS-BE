@@ -89,7 +89,8 @@ route POST "/api/hr/employees/full" -> do {
       -- Create temp auth account (employee_no = username & password, expires 3 days)
       let user_id = temp_service.create_temp_user(map {
         employee_no: body.employee_no,
-        full_name:   body.full_name
+        full_name:   body.full_name,
+        role_id:     body.role_id
       })
       -- Create employee linked to the new auth user
       let emp_body = map {

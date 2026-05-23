@@ -8,7 +8,7 @@ define create_temp_user taking d ->
   do {
     let hashed = crypto.hash_password(d.employee_no)
     db.exec(config.conn,
-      "INSERT INTO auth_users (email, password_hash, name, is_temp_password, temp_until) VALUES (?, ?, ?, 1, DATE_ADD(NOW(), INTERVAL 3 DAY))",
-      [d.employee_no, hashed, d.full_name])
+      "INSERT INTO auth_users (email, password_hash, name, is_temp_password, temp_until, role_id) VALUES (?, ?, ?, 1, DATE_ADD(NOW(), INTERVAL 3 DAY), ?)",
+      [d.employee_no, hashed, d.full_name, d.role_id])
     db.last_id(config.conn)
   }
