@@ -6,176 +6,191 @@
 --
 -- WARNING: Jalankan sekali saja. Jalankan lagi akan duplikat data.
 
-import shared/config
-import shared/db
-import stdlib/crypto
+import config
+
+-- ─── Cleanup (aman dijalankan ulang) ─────────────────────────────────────────
+
+db.exec(config.conn, "DELETE FROM hr_payslip_items WHERE payslip_id IN (SELECT id FROM hr_payslips WHERE payroll_run_id IN (SELECT id FROM hr_payroll_runs WHERE company_id = 1))", [])
+db.exec(config.conn, "DELETE FROM hr_payslips WHERE payroll_run_id IN (SELECT id FROM hr_payroll_runs WHERE company_id = 1)", [])
+db.exec(config.conn, "DELETE FROM hr_payroll_runs WHERE company_id = 1", [])
+db.exec(config.conn, "DELETE FROM hr_employee_components WHERE employee_id IN (SELECT id FROM hr_employees WHERE company_id = 1)", [])
+db.exec(config.conn, "DELETE FROM hr_payroll_components WHERE company_id = 1", [])
+db.exec(config.conn, "DELETE FROM hr_leave_requests WHERE employee_id IN (SELECT id FROM hr_employees WHERE company_id = 1)", [])
+db.exec(config.conn, "DELETE FROM hr_leave_balances WHERE employee_id IN (SELECT id FROM hr_employees WHERE company_id = 1)", [])
+db.exec(config.conn, "DELETE FROM hr_employees WHERE company_id = 1", [])
+db.exec(config.conn, "DELETE FROM auth_users WHERE email IN ('superadmin', 'HR-2026001', 'FIN-2026001', 'IT-2026001', 'IT-2026002')", [])
+db.exec(config.conn, "DELETE FROM auth_role_menus WHERE role_id IN (SELECT id FROM auth_roles WHERE company_id = 1)", [])
+db.exec(config.conn, "DELETE FROM auth_roles WHERE company_id = 1", [])
 
 -- ─── Roles ───────────────────────────────────────────────────────────────────
 
-let hr_role_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_roles (company_id, name, description) VALUES (1, 'HR Manager', 'Full HR — employees, attendance, leave, payroll')",
   [])
+let hr_role_id = db.last_id(config.conn)
 
-let fin_role_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_roles (company_id, name, description) VALUES (1, 'Finance', 'Akses payroll + view laporan keuangan')",
   [])
+let fin_role_id = db.last_id(config.conn)
 
-let mgr_role_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_roles (company_id, name, description) VALUES (1, 'Manager', 'Approve cuti + view data tim')",
   [])
+let mgr_role_id = db.last_id(config.conn)
 
-let staff_role_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_roles (company_id, name, description) VALUES (1, 'Karyawan', 'Akses cuti & absensi sendiri saja')",
   [])
+let staff_role_id = db.last_id(config.conn)
 
 -- ─── Permissions: HR Manager ─────────────────────────────────────────────────
 
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'employees',   1, 1, 1, 1)", [hr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'attendance',  1, 1, 1, 1)", [hr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 1, 1, 1)", [hr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'payroll',      1, 1, 1, 0)", [hr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'departments',  1, 1, 1, 0)", [hr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'employees',   1, 1, 1, 1)", [hr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'attendance',  1, 1, 1, 1)", [hr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 1, 1, 1)", [hr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'payroll',      1, 1, 1, 0)", [hr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'departments',  1, 1, 1, 0)", [hr_role_id])
 
 -- ─── Permissions: Finance ─────────────────────────────────────────────────────
 
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'payroll',      1, 1, 1, 1)", [fin_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'employees',   1, 0, 0, 0)", [fin_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 0, 0, 0)", [fin_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'payroll',      1, 1, 1, 1)", [fin_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'employees',   1, 0, 0, 0)", [fin_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 0, 0, 0)", [fin_role_id])
 
 -- ─── Permissions: Manager ─────────────────────────────────────────────────────
 
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'employees',   1, 0, 0, 0)", [mgr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'attendance',  1, 0, 0, 0)", [mgr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 1, 1, 0)", [mgr_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'departments',  1, 0, 0, 0)", [mgr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'employees',   1, 0, 0, 0)", [mgr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'attendance',  1, 0, 0, 0)", [mgr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 1, 1, 0)", [mgr_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'departments',  1, 0, 0, 0)", [mgr_role_id])
 
 -- ─── Permissions: Karyawan ────────────────────────────────────────────────────
 
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'attendance',  1, 0, 0, 0)", [staff_role_id])
-db.execute(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 1, 0, 0)", [staff_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'attendance',  1, 0, 0, 0)", [staff_role_id])
+db.exec(config.conn, "INSERT INTO auth_role_menus (role_id, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, 'leave',        1, 1, 0, 0)", [staff_role_id])
 
 -- ─── Auth Users ───────────────────────────────────────────────────────────────
 -- Login menggunakan employee_no (disimpan di kolom email)
 -- is_temp_password = 0 → tidak wajib ganti password
 
-let sa_uid = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_users (email, password_hash, name, is_temp_password) VALUES (?, ?, 'Super Admin', 0)",
   ["superadmin", crypto.hash_password("Admin2026!")])
+let sa_uid = db.last_id(config.conn)
 
-let hr_uid = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_users (email, password_hash, name, is_temp_password, role_id) VALUES (?, ?, 'Sari Rahayu', 0, ?)",
   ["HR-2026001", crypto.hash_password("HRD2026!"), hr_role_id])
+let hr_uid = db.last_id(config.conn)
 
-let fin_uid = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_users (email, password_hash, name, is_temp_password, role_id) VALUES (?, ?, 'Rudi Santoso', 0, ?)",
   ["FIN-2026001", crypto.hash_password("Finance2026!"), fin_role_id])
+let fin_uid = db.last_id(config.conn)
 
-let mgr_uid = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_users (email, password_hash, name, is_temp_password, role_id) VALUES (?, ?, 'Dewi Kusuma', 0, ?)",
   ["IT-2026001", crypto.hash_password("Manager2026!"), mgr_role_id])
+let mgr_uid = db.last_id(config.conn)
 
-let stf_uid = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO auth_users (email, password_hash, name, is_temp_password, role_id) VALUES (?, ?, 'Budi Simantara', 0, ?)",
   ["IT-2026002", crypto.hash_password("Staff2026!"), staff_role_id])
+let stf_uid = db.last_id(config.conn)
 
 -- ─── Employees ────────────────────────────────────────────────────────────────
 -- dept: 1=BOD, 2=HR, 3=IT, 4=FIN
 -- pos:  1=CEO, 2=MGR, 3=SPV, 4=STAFF
 
-let hr_emp_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_employees (company_id, department_id, position_id, employee_no, full_name, join_date, employment_type, basic_salary, user_id) VALUES (1, 2, 2, 'HR-2026001', 'Sari Rahayu', '2024-01-15', 'permanent', 8000000, ?)",
   [hr_uid])
+let hr_emp_id = db.last_id(config.conn)
 
-let fin_emp_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_employees (company_id, department_id, position_id, employee_no, full_name, join_date, employment_type, basic_salary, user_id) VALUES (1, 4, 3, 'FIN-2026001', 'Rudi Santoso', '2024-03-01', 'permanent', 6500000, ?)",
   [fin_uid])
+let fin_emp_id = db.last_id(config.conn)
 
-let mgr_emp_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_employees (company_id, department_id, position_id, employee_no, full_name, join_date, employment_type, basic_salary, user_id) VALUES (1, 3, 2, 'IT-2026001', 'Dewi Kusuma', '2023-06-01', 'permanent', 9000000, ?)",
   [mgr_uid])
+let mgr_emp_id = db.last_id(config.conn)
 
-let stf_emp_id = db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_employees (company_id, department_id, position_id, employee_no, full_name, join_date, employment_type, basic_salary, user_id) VALUES (1, 3, 4, 'IT-2026002', 'Budi Simantara', '2024-07-01', 'permanent', 5500000, ?)",
   [stf_uid])
+let stf_emp_id = db.last_id(config.conn)
 
 -- ─── Leave Balances 2026 ──────────────────────────────────────────────────────
 -- leave_type: 1=Cuti Tahunan, 2=Sakit, 4=Izin
 
 -- Sari Rahayu (HR)
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 1, 2026, 12)", [hr_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [hr_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [hr_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 1, 2026, 12)", [hr_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [hr_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [hr_emp_id])
 
 -- Rudi Santoso (Finance) — sudah pakai 2 hari cuti
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days, used_days) VALUES (?, 1, 2026, 12, 2)", [fin_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [fin_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [fin_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days, used_days) VALUES (?, 1, 2026, 12, 2)", [fin_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [fin_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [fin_emp_id])
 
 -- Dewi Kusuma (Manager) — sudah pakai 3 hari
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days, used_days) VALUES (?, 1, 2026, 12, 3)", [mgr_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [mgr_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [mgr_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days, used_days) VALUES (?, 1, 2026, 12, 3)", [mgr_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [mgr_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [mgr_emp_id])
 
 -- Budi Simantara (Staff)
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 1, 2026, 12)", [stf_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [stf_emp_id])
-db.execute(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [stf_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 1, 2026, 12)", [stf_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 2, 2026, 12)", [stf_emp_id])
+db.exec(config.conn, "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, 4, 2026, 3)",  [stf_emp_id])
 
 -- ─── Leave Request Demo (pending) ─────────────────────────────────────────────
 
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_leave_requests (employee_id, leave_type_id, start_date, end_date, total_days, reason, status) VALUES (?, 1, '2026-06-02', '2026-06-04', 3, 'Liburan keluarga', 'pending')",
   [stf_emp_id])
 
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_leave_requests (employee_id, leave_type_id, start_date, end_date, total_days, reason, status) VALUES (?, 2, '2026-05-20', '2026-05-20', 1, 'Demam', 'approved')",
   [fin_emp_id])
 
 -- ─── Payroll Components ───────────────────────────────────────────────────────
 
 -- Tunjangan (Earnings)
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_payroll_components (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order) VALUES (1, 'TJ-MAKAN', 'Tunjangan Makan', 'earning', 'allowance', 'fixed', 500000, 0, 10)",
   [])
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_payroll_components (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order) VALUES (1, 'TJ-TRANS', 'Tunjangan Transport', 'earning', 'allowance', 'fixed', 300000, 0, 20)",
   [])
 
 -- Potongan BPJS (Deductions) — iuran karyawan
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_payroll_components (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order) VALUES (1, 'BPJS-KES', 'BPJS Kesehatan (1%)', 'deduction', 'bpjs_kes', 'pct_basic', 1.00, 0, 10)",
   [])
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_payroll_components (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order) VALUES (1, 'BPJS-JHT', 'BPJS JHT (2%)', 'deduction', 'bpjs_jht', 'pct_basic', 2.00, 0, 20)",
   [])
-db.execute(config.conn,
+db.exec(config.conn,
   "INSERT INTO hr_payroll_components (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order) VALUES (1, 'BPJS-JP', 'BPJS Jaminan Pensiun (1%)', 'deduction', 'bpjs_jp', 'pct_basic', 1.00, 0, 30)",
   [])
 
 -- ─── Update leave type 'Izin' dengan deduction policy ────────────────────────
 -- Izin di luar cuti → karyawan pilih: potong gaji atau potong sisa cuti
 
-db.execute(config.conn,
+db.exec(config.conn,
   "UPDATE hr_leave_types SET deduction_type = 'employee_choice', deduction_formula = 'per_day' WHERE id = 4",
   [])
 
 -- ─── Done ─────────────────────────────────────────────────────────────────────
 
-show("╔════════════════════════════════════════════════════╗")
-show("║         SIMULASI SEED BERHASIL ✓                   ║")
-show("╠════════════════════════════════════════════════════╣")
-show("║  Akun          Login          Password             ║")
-show("║  ──────────    ─────────────  ──────────────────   ║")
-show("║  Super Admin   superadmin     Admin2026!           ║")
-show("║  HR Manager    HR-2026001     HRD2026!             ║")
-show("║  Finance       FIN-2026001    Finance2026!         ║")
-show("║  IT Manager    IT-2026001     Manager2026!         ║")
-show("║  IT Staff      IT-2026002     Staff2026!           ║")
-show("╠════════════════════════════════════════════════════╣")
-show("║  Data demo:                                        ║")
-show("║  • 4 employees di HR, Finance, IT dept             ║")
-show("║  • Leave balances 2026 sudah di-init               ║")
-show("║  • 1 pending leave request (Budi)                  ║")
-show("║  • 1 approved leave request (Rudi)                 ║")
-show("║  • Payroll components: 2 tunjangan + 3 BPJS        ║")
-show("╚════════════════════════════════════════════════════╝")
+show -> "=== SIMULASI SEED BERHASIL ==="
+show -> "Akun          | Login       | Password"
+show -> "Super Admin   | superadmin  | Admin2026!"
+show -> "HR Manager    | HR-2026001  | HRD2026!"
+show -> "Finance       | FIN-2026001 | Finance2026!"
+show -> "IT Manager    | IT-2026001  | Manager2026!"
+show -> "IT Staff      | IT-2026002  | Staff2026!"
+show -> "Data: 4 employees, leave balances, 2 leave requests demo, payroll components (BPJS + tunjangan)"
