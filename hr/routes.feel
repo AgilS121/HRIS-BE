@@ -325,7 +325,7 @@ route DELETE "/api/hr/attendance/:id" -> do {
     }
 }
 
--- ─── Leave ───────────────────────────────────────────────────────────────────
+-- ─── Leave Types ─────────────────────────────────────────────────────────────
 
 route GET "/api/hr/leave-types" -> do {
   let claims     = auth_middleware.require_auth(request)
@@ -335,15 +335,123 @@ route GET "/api/hr/leave-types" -> do {
     otherwise -> respond response.ok(service.list_leave_types(company_id))
 }
 
+route POST "/api/hr/leave-types" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.code == nothing or body.name == nothing
+    -> respond 400 response.bad_request("company_id, code, name are required")
+    otherwise -> do {
+      let new_id = service.create_leave_type(body)
+      respond 201 response.ok(service.find_leave_type(new_id))
+    }
+}
+
+route PUT "/api/hr/leave-types/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let lt     = service.find_leave_type(id)
+  when lt == nothing
+    -> respond 404 response.not_found("leave type")
+    otherwise -> do {
+      service.update_leave_type(map {
+        id:                   id,
+        name:                 map.get(body, "name", lt.name),
+        default_quota_days:   map.get(body, "default_quota_days", lt.default_quota_days),
+        is_paid:              map.get(body, "is_paid", lt.is_paid),
+        requires_attachment:  map.get(body, "requires_attachment", lt.requires_attachment),
+        min_days_advance:     map.get(body, "min_days_advance", lt.min_days_advance),
+        carry_over_max:       map.get(body, "carry_over_max", lt.carry_over_max),
+        is_encashable:        map.get(body, "is_encashable", lt.is_encashable)
+      })
+      respond response.ok(service.find_leave_type(id))
+    }
+}
+
+route DELETE "/api/hr/leave-types/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let lt     = service.find_leave_type(id)
+  when lt == nothing
+    -> respond 404 response.not_found("leave type")
+    otherwise -> do {
+      service.deactivate_leave_type(id)
+      respond response.ok(map { message: "leave type deactivated" })
+    }
+}
+
+-- ─── Leave Balances ──────────────────────────────────────────────────────────
+
+route GET "/api/hr/leave-balances" -> do {
+  let claims      = auth_middleware.require_auth(request)
+  let employee_id = map.get(query, "employee_id", nothing)
+  let year        = map.get(query, "year", nothing)
+  when employee_id == nothing or year == nothing
+    -> respond 400 response.bad_request("employee_id and year are required")
+    otherwise -> respond response.ok(service.list_leave_balances_by_employee(map { employee_id: employee_id, year: year }))
+}
+
+route GET "/api/hr/leave-balances/all" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  let year       = map.get(query, "year", nothing)
+  when company_id == nothing or year == nothing
+    -> respond 400 response.bad_request("company_id and year are required")
+    otherwise -> respond response.ok(service.list_all_leave_balances(map { company_id: company_id, year: year }))
+}
+
+route POST "/api/hr/leave-balances/init" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.employee_id == nothing or body.leave_type_id == nothing or body.year == nothing or body.quota_days == nothing
+    -> respond 400 response.bad_request("employee_id, leave_type_id, year, quota_days are required")
+    otherwise -> do {
+      service.init_leave_balance(map {
+        employee_id:   body.employee_id,
+        leave_type_id: body.leave_type_id,
+        year:          body.year,
+        quota_days:    body.quota_days
+      })
+      respond response.ok(map { message: "balance initialized" })
+    }
+}
+
+route POST "/api/hr/leave-adjustments" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.employee_id == nothing or body.leave_type_id == nothing or body.year == nothing or body.days == nothing or body.reason == nothing
+    -> respond 400 response.bad_request("employee_id, leave_type_id, year, days, reason are required")
+    otherwise -> do {
+      service.adjust_leave_balance(map {
+        employee_id:   body.employee_id,
+        leave_type_id: body.leave_type_id,
+        year:          body.year,
+        days:          body.days,
+        reason:        body.reason,
+        adjusted_by:   claims.user_id
+      })
+      respond response.ok(map { message: "balance adjusted" })
+    }
+}
+
+-- ─── Leave Requests ──────────────────────────────────────────────────────────
+
+route GET "/api/hr/leave-requests/mine" -> do {
+  let claims      = auth_middleware.require_auth(request)
+  let employee_id = map.get(query, "employee_id", nothing)
+  when employee_id == nothing
+    -> respond 400 response.bad_request("employee_id is required")
+    otherwise -> respond response.ok(service.list_leave_requests_by_employee(employee_id))
+}
+
+route GET "/api/hr/leave-requests/pending" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(service.list_pending_requests(company_id))
+}
+
 route GET "/api/hr/leave-requests" -> do {
   let claims     = auth_middleware.require_auth(request)
   let company_id = map.get(query, "company_id", nothing)
   when company_id == nothing
     -> respond 400 response.bad_request("company_id query param is required")
-    otherwise -> do {
-      let d = map { company_id: company_id }
-      respond response.ok(service.list_leave_requests(d))
-    }
+    otherwise -> respond response.ok(service.list_leave_requests(map { company_id: company_id }))
 }
 
 route POST "/api/hr/leave-requests" -> do {
@@ -365,8 +473,7 @@ route PUT "/api/hr/leave-requests/:id/approve" -> do {
       when leave_r.status != "pending"
         -> respond 409 response.conflict("leave request is no longer pending")
         otherwise -> do {
-          let d = map { id: id, approver_id: claims.user_id }
-          service.approve_leave_request(d)
+          service.approve_leave_request(map { id: id, approver_id: claims.user_id })
           respond response.ok(service.find_leave_request(id))
         }
     }
@@ -381,8 +488,26 @@ route PUT "/api/hr/leave-requests/:id/reject" -> do {
       when leave_r.status != "pending"
         -> respond 409 response.conflict("leave request is no longer pending")
         otherwise -> do {
-          let d = map { id: id, approver_id: claims.user_id, note: body.note }
-          service.reject_leave_request(d)
+          service.reject_leave_request(map { id: id, approver_id: claims.user_id, note: body.note })
+          respond response.ok(service.find_leave_request(id))
+        }
+    }
+}
+
+route PUT "/api/hr/leave-requests/:id/cancel" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let leave_r = service.find_leave_request(id)
+  when leave_r == nothing
+    -> respond 404 response.not_found("leave request")
+    otherwise -> do {
+      when leave_r.status != "pending" and leave_r.status != "approved"
+        -> respond 409 response.conflict("only pending or approved requests can be cancelled")
+        otherwise -> do {
+          service.cancel_leave_request(map {
+            id:           id,
+            reason:       body.reason,
+            cancelled_by: claims.user_id
+          })
           respond response.ok(service.find_leave_request(id))
         }
     }

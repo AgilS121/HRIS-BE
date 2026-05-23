@@ -84,45 +84,128 @@ define update_attendance taking d ->
 define delete_attendance taking id ->
   db.exec(config.conn, "DELETE FROM hr_attendance WHERE id=?", [id])
 
--- ─── Leave ───────────────────────────────────────────────────────────────────
+-- ─── Leave Types (Policy) ────────────────────────────────────────────────────
 
 define list_leave_types taking company_id ->
   db.query(config.conn,
     "SELECT * FROM hr_leave_types WHERE company_id = ? AND is_active = 1 ORDER BY name",
     [company_id])
 
+define find_leave_type taking id ->
+  db.query_one(config.conn, "SELECT * FROM hr_leave_types WHERE id = ?", [id])
+
+define create_leave_type taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_leave_types (company_id, code, name, default_quota_days, is_paid, requires_attachment, min_days_advance, carry_over_max, is_encashable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [d.company_id, d.code, d.name,
+       map.get(d, "default_quota_days", 0), map.get(d, "is_paid", true),
+       map.get(d, "requires_attachment", false), map.get(d, "min_days_advance", 0),
+       map.get(d, "carry_over_max", 0), map.get(d, "is_encashable", false)])
+    db.last_id(config.conn)
+  }
+
+define update_leave_type taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_leave_types SET name=?, default_quota_days=?, is_paid=?, requires_attachment=?, min_days_advance=?, carry_over_max=?, is_encashable=?, updated_at=NOW() WHERE id=?",
+    [d.name, map.get(d, "default_quota_days", 0), map.get(d, "is_paid", true),
+     map.get(d, "requires_attachment", false), map.get(d, "min_days_advance", 0),
+     map.get(d, "carry_over_max", 0), map.get(d, "is_encashable", false), d.id])
+
+define deactivate_leave_type taking id ->
+  db.exec(config.conn, "UPDATE hr_leave_types SET is_active=0 WHERE id=?", [id])
+
+-- ─── Leave Balances ──────────────────────────────────────────────────────────
+
 define get_leave_balance taking d ->
   db.query_one(config.conn,
-    "SELECT * FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?",
+    "SELECT *, (quota_days + adjusted_days + carried_over_days - used_days) AS remaining_days FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?",
     [d.employee_id, d.leave_type_id, d.year])
+
+define list_leave_balances_by_employee taking d ->
+  db.query(config.conn,
+    "SELECT b.*, lt.name AS leave_type_name, lt.code, lt.is_paid, lt.is_encashable, (b.quota_days + b.adjusted_days + b.carried_over_days - b.used_days) AS remaining_days FROM hr_leave_balances b JOIN hr_leave_types lt ON b.leave_type_id = lt.id WHERE b.employee_id = ? AND b.year = ? ORDER BY lt.name",
+    [d.employee_id, d.year])
+
+define list_all_leave_balances taking d ->
+  db.query(config.conn,
+    "SELECT b.*, e.full_name AS employee_name, e.employee_no, lt.name AS leave_type_name, lt.code, (b.quota_days + b.adjusted_days + b.carried_over_days - b.used_days) AS remaining_days FROM hr_leave_balances b JOIN hr_employees e ON b.employee_id = e.id JOIN hr_leave_types lt ON b.leave_type_id = lt.id WHERE e.company_id = ? AND b.year = ? ORDER BY e.full_name, lt.name",
+    [d.company_id, d.year])
+
+define init_leave_balance taking d ->
+  db.exec(config.conn,
+    "INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, quota_days) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE quota_days=VALUES(quota_days), updated_at=NOW()",
+    [d.employee_id, d.leave_type_id, d.year, d.quota_days])
+
+define adjust_leave_balance taking d ->
+  do {
+    db.exec(config.conn,
+      "UPDATE hr_leave_balances SET adjusted_days = adjusted_days + ?, updated_at=NOW() WHERE employee_id=? AND leave_type_id=? AND year=?",
+      [d.days, d.employee_id, d.leave_type_id, d.year])
+    db.exec(config.conn,
+      "INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, year, days, reason, adjusted_by) VALUES (?, ?, ?, ?, ?, ?)",
+      [d.employee_id, d.leave_type_id, d.year, d.days, d.reason, map.get(d, "adjusted_by", nothing)])
+  }
+
+-- ─── Leave Requests ──────────────────────────────────────────────────────────
 
 define list_leave_requests taking d ->
   db.query(config.conn,
-    "SELECT r.*, e.full_name AS employee_name, lt.name AS leave_type_name FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE e.company_id = ? ORDER BY r.created_at DESC",
+    "SELECT r.*, e.full_name AS employee_name, e.employee_no, lt.name AS leave_type_name, lt.code FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE e.company_id = ? ORDER BY r.created_at DESC",
     [d.company_id])
+
+define list_pending_requests taking company_id ->
+  db.query(config.conn,
+    "SELECT r.*, e.full_name AS employee_name, e.employee_no, lt.name AS leave_type_name, lt.code FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE e.company_id = ? AND r.status = 'pending' ORDER BY r.created_at ASC",
+    [company_id])
+
+define list_leave_requests_by_employee taking employee_id ->
+  db.query(config.conn,
+    "SELECT r.*, lt.name AS leave_type_name, lt.code FROM hr_leave_requests r JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE r.employee_id = ? ORDER BY r.created_at DESC",
+    [employee_id])
 
 define find_leave_request taking id ->
   db.query_one(config.conn,
-    "SELECT * FROM hr_leave_requests WHERE id = ?",
+    "SELECT r.*, e.full_name AS employee_name, lt.name AS leave_type_name FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE r.id = ?",
     [id])
 
 define create_leave_request taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO hr_leave_requests (employee_id, leave_type_id, start_date, end_date, total_days, reason) VALUES (?, ?, ?, ?, ?, ?)",
-      [d.employee_id, d.leave_type_id, d.start_date, d.end_date, d.total_days, map.get(d, "reason", nothing)])
+      "INSERT INTO hr_leave_requests (employee_id, leave_type_id, start_date, end_date, total_days, reason, attachment_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [d.employee_id, d.leave_type_id, d.start_date, d.end_date, d.total_days,
+       map.get(d, "reason", nothing), map.get(d, "attachment_path", nothing)])
     db.last_id(config.conn)
   }
 
 define approve_leave_request taking d ->
-  db.exec(config.conn,
-    "UPDATE hr_leave_requests SET status='approved', approved_by=?, approved_at=NOW(), updated_at=NOW() WHERE id=? AND status='pending'",
-    [d.approver_id, d.id])
+  do {
+    let req = find_leave_request(d.id)
+    db.exec(config.conn,
+      "UPDATE hr_leave_requests SET status='approved', approved_by=?, approved_at=NOW(), updated_at=NOW() WHERE id=? AND status='pending'",
+      [d.approver_id, d.id])
+    when req != nothing ->
+      db.exec(config.conn,
+        "UPDATE hr_leave_balances SET used_days = used_days + ?, updated_at=NOW() WHERE employee_id=? AND leave_type_id=? AND year=YEAR(?)",
+        [req.total_days, req.employee_id, req.leave_type_id, req.start_date])
+  }
 
 define reject_leave_request taking d ->
   db.exec(config.conn,
     "UPDATE hr_leave_requests SET status='rejected', approved_by=?, approved_at=NOW(), rejection_note=?, updated_at=NOW() WHERE id=? AND status='pending'",
     [d.approver_id, map.get(d, "note", nothing), d.id])
+
+define cancel_leave_request taking d ->
+  do {
+    let req = find_leave_request(d.id)
+    db.exec(config.conn,
+      "UPDATE hr_leave_requests SET status='cancelled', cancel_reason=?, cancelled_at=NOW(), cancelled_by=?, updated_at=NOW() WHERE id=? AND status IN ('pending','approved')",
+      [map.get(d, "reason", nothing), map.get(d, "cancelled_by", nothing), d.id])
+    when req != nothing and req.status == "approved" ->
+      db.exec(config.conn,
+        "UPDATE hr_leave_balances SET used_days = GREATEST(0, used_days - ?), updated_at=NOW() WHERE employee_id=? AND leave_type_id=? AND year=YEAR(?)",
+        [req.total_days, req.employee_id, req.leave_type_id, req.start_date])
+  }
 
 -- ─── Employee Number Generation ───────────────────────────────────────────────
 -- Format: {DEPT_CODE}-{YEAR}{3-digit-seq}  e.g. IT-2026001, HR-2026002
