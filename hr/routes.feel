@@ -3,6 +3,7 @@
 import shared/response
 import shared/auth_middleware
 import hr/service
+import auth/temp_service
 
 -- ─── Employees ───────────────────────────────────────────────────────────────
 
@@ -79,14 +80,57 @@ route GET "/api/hr/employees/next-no" -> do {
     otherwise -> respond response.ok(map { employee_no: service.generate_employee_no(dept_id) })
 }
 
--- POST /api/hr/employees/full — create employee with all profile fields
+-- POST /api/hr/employees/full — create employee + auto-create temp login account
 route POST "/api/hr/employees/full" -> do {
   let claims = auth_middleware.require_auth(request)
   when body.company_id == nothing or body.full_name == nothing or body.employee_no == nothing or body.join_date == nothing
     -> respond 400 response.bad_request("company_id, full_name, employee_no, join_date are required")
     otherwise -> do {
-      let new_id = service.create_employee_full(body)
-      respond 201 response.ok(service.find_employee(new_id))
+      -- Create temp auth account (employee_no = username & password, expires 3 days)
+      let user_id = temp_service.create_temp_user(map {
+        employee_no: body.employee_no,
+        full_name:   body.full_name
+      })
+      -- Create employee linked to the new auth user
+      let emp_body = map {
+        company_id:      body.company_id,
+        department_id:   body.department_id,
+        position_id:     body.position_id,
+        employee_no:     body.employee_no,
+        full_name:       body.full_name,
+        nickname:        body.nickname,
+        gender:          body.gender,
+        email:           body.email,
+        phone:           body.phone,
+        birth_place:     body.birth_place,
+        birth_date:      body.birth_date,
+        national_id:     body.national_id,
+        tax_id:          body.tax_id,
+        marital_status:  body.marital_status,
+        address:         body.address,
+        join_date:       body.join_date,
+        employment_type: body.employment_type,
+        contract_number: body.contract_number,
+        contract_start:  body.contract_start,
+        contract_end:    body.contract_end,
+        contract_months: body.contract_months,
+        bank_name:       body.bank_name,
+        bank_account_no: body.bank_account_no,
+        bank_account_name: body.bank_account_name,
+        salary_grade:    body.salary_grade,
+        basic_salary:    body.basic_salary,
+        user_id:         user_id
+      }
+      let new_id = service.create_employee_full(emp_body)
+      let employee = service.find_employee(new_id)
+      respond 201 response.ok(map {
+        employee:          employee,
+        temp_credentials:  map {
+          username: body.employee_no,
+          password: body.employee_no,
+          expires_in_days: 3
+        }
+      })
     }
 }
 

@@ -1,5 +1,4 @@
--- auth/routes.feel — login, logout, me endpoints.
--- Import in main.feel: import auth/routes
+-- auth/routes.feel — login, logout, me, temp credentials endpoints.
 
 import config
 import shared/response
@@ -7,7 +6,9 @@ import shared/auth_middleware
 import auth/service
 import master/roles_service
 
--- POST /api/auth/login — verify credentials, issue JWT
+-- POST /api/auth/login
+-- Supports both real email and employee_no as username.
+-- Returns is_temp + hours_remaining when temp credentials are used.
 route POST "/api/auth/login" -> do {
   let email    = body.email
   let password = body.password
@@ -21,37 +22,106 @@ route POST "/api/auth/login" -> do {
           when not crypto.verify_password(password, user.password_hash)
             -> respond 401 response.unauthorized("invalid email or password")
             otherwise -> do {
-              let token = service.make_token(user)
-              respond response.ok(map {
-                token: token,
-                user: map { id: user.id, email: user.email, name: user.name }
-              })
+              -- Temp account: check if expired
+              when user.is_temp_password and user.hours_remaining != nothing and user.hours_remaining < 0
+                -> respond 401 response.bad_request("temp_expired")
+                otherwise -> do {
+                  let token = service.make_token(user)
+                  respond response.ok(map {
+                    token:          token,
+                    is_temp:        user.is_temp_password,
+                    hours_remaining: user.hours_remaining,
+                    temp_until:     user.temp_until,
+                    user: map { id: user.id, email: user.email, name: user.name }
+                  })
+                }
             }
         }
     }
 }
 
--- GET /api/auth/me — return authenticated user profile
+-- GET /api/auth/me — return authenticated user profile with temp status
 route GET "/api/auth/me" -> do {
   let claims = auth_middleware.require_auth(request)
   let user   = service.find_user_by_id(claims.user_id)
   when user == nothing
     -> respond 404 response.not_found("user")
     otherwise -> respond response.ok(map {
-      id:    user.id,
-      email: user.email,
-      name:  user.name
+      id:              user.id,
+      email:           user.email,
+      name:            user.name,
+      is_temp:         user.is_temp_password,
+      hours_remaining: user.hours_remaining,
+      temp_until:      user.temp_until
     })
 }
 
--- POST /api/auth/logout — stateless JWT: acknowledge and tell client to clear
+-- POST /api/auth/logout
 route POST "/api/auth/logout" -> do {
   let claims = auth_middleware.require_auth(request)
   respond response.ok(map { message: "logged out" })
 }
 
--- GET /api/auth/my-menus — return permitted menus for current user.
--- If user has no role assigned, returns empty list (frontend treats as superadmin → show all).
+-- POST /api/auth/change-password — replace temp credentials with real email + password
+route POST "/api/auth/change-password" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.new_email == nothing or body.new_password == nothing
+    -> respond 400 response.bad_request("new_email and new_password are required")
+    otherwise -> do {
+      when body.new_password != body.confirm_password
+        -> respond 400 response.bad_request("passwords do not match")
+        otherwise -> do {
+          -- Check current password before allowing change
+          let user = service.find_user_by_id(claims.user_id)
+          when not crypto.verify_password(body.current_password, user.password_hash)
+            -> respond 401 response.unauthorized("current password is incorrect")
+            otherwise -> do {
+              service.change_password(map {
+                user_id:      claims.user_id,
+                new_email:    body.new_email,
+                new_password: body.new_password
+              })
+              -- Issue a fresh token with updated email
+              let updated = service.find_user_by_id(claims.user_id)
+              let token   = service.make_token(updated)
+              respond response.ok(map {
+                message: "password updated successfully",
+                token:   token,
+                user:    map { id: updated.id, email: updated.email, name: updated.name }
+              })
+            }
+        }
+    }
+}
+
+-- POST /api/auth/users/:id/extend-temp — admin: extend temp access by 1 day
+route POST "/api/auth/users/:id/extend-temp" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let status = service.get_temp_status(id)
+  when status == nothing
+    -> respond 404 response.not_found("user")
+    otherwise -> do {
+      when not status.is_temp_password
+        -> respond 400 response.bad_request("user does not have temp credentials")
+        otherwise -> do {
+          service.extend_temp_access(id)
+          let updated = service.get_temp_status(id)
+          respond response.ok(map {
+            message:         "access extended by 1 day",
+            temp_until:      updated.temp_until,
+            hours_remaining: updated.hours_remaining
+          })
+        }
+    }
+}
+
+-- GET /api/auth/temp-users — admin: list all temp accounts with expiry status
+route GET "/api/auth/temp-users" -> do {
+  let claims = auth_middleware.require_auth(request)
+  respond response.ok(service.list_temp_users(nothing))
+}
+
+-- GET /api/auth/my-menus — permitted menus for current user
 route GET "/api/auth/my-menus" -> do {
   let claims = auth_middleware.require_auth(request)
   let menus  = roles_service.get_user_menus(claims.user_id)

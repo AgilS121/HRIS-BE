@@ -3,17 +3,18 @@
 
 import config
 
+-- Find by email OR employee_no (temp users use employee_no as email)
 define find_user_by_email taking email ->
   db.query_one(
     config.conn,
-    "SELECT id, email, password_hash, name, is_active FROM auth_users WHERE email = ? AND is_active = 1",
+    "SELECT id, email, password_hash, name, is_active, is_temp_password, temp_until, TIMESTAMPDIFF(HOUR, NOW(), temp_until) AS hours_remaining FROM auth_users WHERE email = ? AND is_active = 1",
     [email]
   )
 
 define find_user_by_id taking id ->
   db.query_one(
     config.conn,
-    "SELECT id, email, name FROM auth_users WHERE id = ? AND is_active = 1",
+    "SELECT id, email, name, is_temp_password, temp_until, TIMESTAMPDIFF(HOUR, NOW(), temp_until) AS hours_remaining FROM auth_users WHERE id = ? AND is_active = 1",
     [id]
   )
 
@@ -23,3 +24,30 @@ define make_token taking user ->
     let claims = map { user_id: user.id, email: user.email, name: user.name, exp: exp }
     crypto.jwt_sign(claims, config.jwt_secret)
   }
+
+-- Change password: set real email + password, clear temp flags.
+define change_password taking d ->
+  do {
+    let hashed = crypto.hash_password(d.new_password)
+    db.exec(config.conn,
+      "UPDATE auth_users SET email=?, password_hash=?, is_temp_password=0, temp_until=NULL WHERE id=?",
+      [d.new_email, hashed, d.user_id])
+  }
+
+-- Admin extends a temp account by 1 day (from now or current temp_until, whichever is later).
+define extend_temp_access taking user_id ->
+  db.exec(config.conn,
+    "UPDATE auth_users SET temp_until = DATE_ADD(GREATEST(NOW(), COALESCE(temp_until, NOW())), INTERVAL 1 DAY) WHERE id=? AND is_temp_password=1",
+    [user_id])
+
+-- Get temp account status for a user
+define get_temp_status taking user_id ->
+  db.query_one(config.conn,
+    "SELECT id, email, name, is_temp_password, temp_until, TIMESTAMPDIFF(HOUR, NOW(), temp_until) AS hours_remaining FROM auth_users WHERE id=?",
+    [user_id])
+
+-- List all temp accounts (for admin panel)
+define list_temp_users taking _ ->
+  db.query(config.conn,
+    "SELECT u.id, u.email, u.name, u.temp_until, TIMESTAMPDIFF(HOUR, NOW(), u.temp_until) AS hours_remaining, e.employee_no, e.full_name FROM auth_users u LEFT JOIN hr_employees e ON e.user_id = u.id WHERE u.is_temp_password = 1 AND u.is_active = 1 ORDER BY u.temp_until ASC",
+    [])
