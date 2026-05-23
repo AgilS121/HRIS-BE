@@ -179,11 +179,12 @@ define create_leave_request taking d ->
   }
 
 define approve_leave_request taking d ->
+  -- d.user_id = auth_users.id; subquery resolves to hr_employees.id (nullable)
   do {
     let req = find_leave_request(d.id)
     db.exec(config.conn,
-      "UPDATE hr_leave_requests SET status='approved', approved_by=?, approved_at=NOW(), updated_at=NOW() WHERE id=? AND status='pending'",
-      [d.approver_id, d.id])
+      "UPDATE hr_leave_requests SET status='approved', approved_by=(SELECT id FROM hr_employees WHERE user_id=? LIMIT 1), approved_at=NOW(), updated_at=NOW() WHERE id=? AND status='pending'",
+      [d.user_id, d.id])
     when req != nothing ->
       db.exec(config.conn,
         "UPDATE hr_leave_balances SET used_days = used_days + ?, updated_at=NOW() WHERE employee_id=? AND leave_type_id=? AND year=YEAR(?)",
@@ -191,9 +192,10 @@ define approve_leave_request taking d ->
   }
 
 define reject_leave_request taking d ->
+  -- d.user_id = auth_users.id; subquery resolves to hr_employees.id (nullable)
   db.exec(config.conn,
-    "UPDATE hr_leave_requests SET status='rejected', approved_by=?, approved_at=NOW(), rejection_note=?, updated_at=NOW() WHERE id=? AND status='pending'",
-    [d.approver_id, map.get(d, "note", nothing), d.id])
+    "UPDATE hr_leave_requests SET status='rejected', approved_by=(SELECT id FROM hr_employees WHERE user_id=? LIMIT 1), approved_at=NOW(), rejection_note=?, updated_at=NOW() WHERE id=? AND status='pending'",
+    [d.user_id, map.get(d, "note", nothing), d.id])
 
 define cancel_leave_request taking d ->
   do {
