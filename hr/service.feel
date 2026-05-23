@@ -60,8 +60,29 @@ define clock_out taking d ->
 
 define list_attendance taking d ->
   db.query(config.conn,
-    "SELECT a.*, e.full_name AS employee_name FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE e.company_id = ? AND a.work_date BETWEEN ? AND ? ORDER BY a.work_date DESC, e.full_name",
+    "SELECT a.*, e.full_name AS employee_name, e.employee_no FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE e.company_id = ? AND a.work_date BETWEEN ? AND ? ORDER BY a.work_date DESC, e.full_name",
     [d.company_id, d.date_from, d.date_to])
+
+define find_attendance taking id ->
+  db.query_one(config.conn,
+    "SELECT a.*, e.full_name AS employee_name, e.employee_no FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE a.id = ?",
+    [id])
+
+define create_attendance taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_attendance (employee_id, work_date, clock_in_at, clock_out_at, status, note) VALUES (?, ?, ?, ?, ?, ?)",
+      [d.employee_id, d.work_date, map.get(d, "clock_in_at", nothing), map.get(d, "clock_out_at", nothing), map.get(d, "status", "present"), map.get(d, "note", nothing)])
+    db.last_id(config.conn)
+  }
+
+define update_attendance taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_attendance SET clock_in_at=?, clock_out_at=?, status=?, note=?, updated_at=NOW() WHERE id=?",
+    [map.get(d, "clock_in_at", nothing), map.get(d, "clock_out_at", nothing), map.get(d, "status", "present"), map.get(d, "note", nothing), d.id])
+
+define delete_attendance taking id ->
+  db.exec(config.conn, "DELETE FROM hr_attendance WHERE id=?", [id])
 
 -- ─── Leave ───────────────────────────────────────────────────────────────────
 

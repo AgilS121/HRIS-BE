@@ -280,6 +280,51 @@ route GET "/api/hr/attendance" -> do {
     }
 }
 
+route POST "/api/hr/attendance" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.employee_id == nothing or body.work_date == nothing
+    -> respond 400 response.bad_request("employee_id and work_date are required")
+    otherwise -> do {
+      let new_id = service.create_attendance(map {
+        employee_id:  body.employee_id,
+        work_date:    body.work_date,
+        clock_in_at:  body.clock_in_at,
+        clock_out_at: body.clock_out_at,
+        status:       map.get(body, "status", "present"),
+        note:         body.note
+      })
+      respond 201 response.ok(service.find_attendance(new_id))
+    }
+}
+
+route PUT "/api/hr/attendance/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let rec    = service.find_attendance(id)
+  when rec == nothing
+    -> respond 404 response.not_found("attendance record")
+    otherwise -> do {
+      service.update_attendance(map {
+        id:           id,
+        clock_in_at:  body.clock_in_at,
+        clock_out_at: body.clock_out_at,
+        status:       map.get(body, "status", rec.status),
+        note:         body.note
+      })
+      respond response.ok(service.find_attendance(id))
+    }
+}
+
+route DELETE "/api/hr/attendance/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let rec    = service.find_attendance(id)
+  when rec == nothing
+    -> respond 404 response.not_found("attendance record")
+    otherwise -> do {
+      service.delete_attendance(id)
+      respond response.ok(map { message: "attendance record deleted" })
+    }
+}
+
 -- ─── Leave ───────────────────────────────────────────────────────────────────
 
 route GET "/api/hr/leave-types" -> do {
