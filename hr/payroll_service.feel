@@ -1,0 +1,296 @@
+-- hr/payroll_service.feel — payroll components, runs, payslip generation
+
+import shared/config
+import shared/db
+
+-- ─── Payroll Components ───────────────────────────────────────────────────────
+
+define list_payroll_components taking company_id ->
+  db.query(config.conn,
+    "SELECT * FROM hr_payroll_components WHERE company_id = ? AND is_active = TRUE ORDER BY type, sort_order, code",
+    [company_id])
+
+define find_payroll_component taking id ->
+  db.query_one(config.conn, "SELECT * FROM hr_payroll_components WHERE id = ?", [id])
+
+define create_payroll_component taking d ->
+  db.execute(config.conn,
+    "INSERT INTO hr_payroll_components (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [d.company_id, d.code, d.name, d.type, map.get(d, "category", "custom"),
+     map.get(d, "calc_basis", "fixed"), map.get(d, "rate", 0),
+     map.get(d, "is_taxable", false), map.get(d, "sort_order", 0)])
+
+define update_payroll_component taking d ->
+  db.execute(config.conn,
+    "UPDATE hr_payroll_components SET name = ?, category = ?, calc_basis = ?, rate = ?, is_taxable = ?, sort_order = ? WHERE id = ?",
+    [d.name, map.get(d, "category", "custom"), d.calc_basis, d.rate,
+     map.get(d, "is_taxable", false), map.get(d, "sort_order", 0), d.id])
+
+define delete_payroll_component taking id ->
+  db.execute(config.conn, "UPDATE hr_payroll_components SET is_active = FALSE WHERE id = ?", [id])
+
+-- ─── Employee Component Overrides ────────────────────────────────────────────
+
+define list_employee_components taking employee_id ->
+  db.query(config.conn,
+    "SELECT ec.*, pc.code, pc.name as component_name, pc.type, pc.category, pc.calc_basis, pc.rate as default_rate
+     FROM hr_employee_components ec
+     JOIN hr_payroll_components pc ON pc.id = ec.component_id
+     WHERE ec.employee_id = ? AND ec.is_active = TRUE
+     ORDER BY pc.type, pc.sort_order",
+    [employee_id])
+
+define set_employee_component taking d ->
+  db.execute(config.conn,
+    "INSERT INTO hr_employee_components (employee_id, component_id, override_amount, effective_from, note)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE override_amount = ?, effective_from = ?, note = ?, is_active = TRUE",
+    [d.employee_id, d.component_id, d.override_amount, d.effective_from,
+     map.get(d, "note", nothing),
+     d.override_amount, d.effective_from, map.get(d, "note", nothing)])
+
+define remove_employee_component taking id ->
+  db.execute(config.conn, "UPDATE hr_employee_components SET is_active = FALSE WHERE id = ?", [id])
+
+-- ─── Payroll Runs ─────────────────────────────────────────────────────────────
+
+define list_payroll_runs taking company_id ->
+  db.query(config.conn,
+    "SELECT pr.*,
+       COUNT(ps.id) as payslip_count,
+       COALESCE(SUM(ps.net_salary), 0) as total_net,
+       COALESCE(SUM(ps.total_deductions), 0) as total_deductions,
+       COALESCE(SUM(ps.gross_earnings), 0) as total_gross
+     FROM hr_payroll_runs pr
+     LEFT JOIN hr_payslips ps ON ps.payroll_run_id = pr.id
+     WHERE pr.company_id = ?
+     GROUP BY pr.id
+     ORDER BY pr.period_year DESC, pr.period_month DESC",
+    [company_id])
+
+define find_payroll_run taking id ->
+  db.query_one(config.conn, "SELECT * FROM hr_payroll_runs WHERE id = ?", [id])
+
+define create_payroll_run taking d ->
+  db.execute(config.conn,
+    "INSERT INTO hr_payroll_runs (company_id, period_year, period_month, working_days, notes) VALUES (?, ?, ?, ?, ?)",
+    [d.company_id, d.period_year, d.period_month,
+     map.get(d, "working_days", 22), map.get(d, "notes", nothing)])
+
+define lock_payroll_run taking d ->
+  db.execute(config.conn,
+    "UPDATE hr_payroll_runs SET status = 'locked', processed_at = NOW(), processed_by = ? WHERE id = ? AND status = 'draft'",
+    [d.user_id, d.id])
+
+define mark_payroll_paid taking id ->
+  db.execute(config.conn,
+    "UPDATE hr_payroll_runs SET status = 'paid' WHERE id = ? AND status = 'locked'",
+    [id])
+
+-- ─── Payslips ─────────────────────────────────────────────────────────────────
+
+define list_payslips taking run_id ->
+  db.query(config.conn,
+    "SELECT ps.*, e.full_name as employee_name, e.employee_no,
+       d.name as department_name
+     FROM hr_payslips ps
+     JOIN hr_employees e ON e.id = ps.employee_id
+     LEFT JOIN master_departments d ON d.id = e.department_id
+     WHERE ps.payroll_run_id = ?
+     ORDER BY e.full_name",
+    [run_id])
+
+define get_payslip taking id ->
+  db.query_one(config.conn,
+    "SELECT ps.*, e.full_name as employee_name, e.employee_no, e.position_id,
+       p.name as position_name,
+       pr.period_year, pr.period_month, pr.working_days as run_working_days,
+       mc.name as company_name
+     FROM hr_payslips ps
+     JOIN hr_employees e ON e.id = ps.employee_id
+     JOIN hr_payroll_runs pr ON pr.id = ps.payroll_run_id
+     LEFT JOIN master_positions p ON p.id = e.position_id
+     LEFT JOIN master_companies mc ON mc.id = e.company_id
+     WHERE ps.id = ?",
+    [id])
+
+define get_payslip_items taking payslip_id ->
+  db.query(config.conn,
+    "SELECT * FROM hr_payslip_items WHERE payslip_id = ? ORDER BY type DESC, sort_order, id",
+    [payslip_id])
+
+-- ─── Generate Payslips ────────────────────────────────────────────────────────
+-- Menggunakan SQL-heavy approach untuk menghindari iterasi di level Feel.
+-- Semua kalkulasi didelegasikan ke MySQL untuk performa dan atomicity.
+
+define generate_payslips taking d ->
+  -- d: { payroll_run_id, company_id, period_year, period_month, working_days }
+
+  -- Bersihkan data lama (boleh re-generate selama status masih draft)
+  db.execute(config.conn,
+    "DELETE psi FROM hr_payslip_items psi
+     JOIN hr_payslips ps ON ps.id = psi.payslip_id
+     WHERE ps.payroll_run_id = ?",
+    [d.payroll_run_id])
+  db.execute(config.conn,
+    "DELETE FROM hr_payslips WHERE payroll_run_id = ?",
+    [d.payroll_run_id])
+
+  -- 1. Buat header payslip semua karyawan aktif + hitung hari absen bulan ini
+  db.execute(config.conn,
+    "INSERT INTO hr_payslips
+       (payroll_run_id, employee_id, basic_salary, working_days, absent_days, leave_days)
+     SELECT
+       ?, e.id,
+       COALESCE(e.basic_salary, 0),
+       ?,
+       COALESCE((
+         SELECT SUM(lr2.total_days)
+         FROM hr_leave_requests lr2
+         JOIN hr_leave_types lt2 ON lt2.id = lr2.leave_type_id
+         WHERE lr2.employee_id = e.id AND lr2.status = 'approved'
+           AND YEAR(lr2.start_date) = ? AND MONTH(lr2.start_date) = ?
+           AND (lt2.deduction_type = 'salary_cut'
+                OR (lt2.deduction_type = 'employee_choice' AND lr2.deduction_choice = 'salary_cut'))
+       ), 0),
+       COALESCE((
+         SELECT SUM(lr3.total_days)
+         FROM hr_leave_requests lr3
+         WHERE lr3.employee_id = e.id AND lr3.status = 'approved'
+           AND YEAR(lr3.start_date) = ? AND MONTH(lr3.start_date) = ?
+       ), 0)
+     FROM hr_employees e
+     WHERE e.company_id = ? AND e.status = 'active'",
+    [d.payroll_run_id, d.working_days,
+     d.period_year, d.period_month,
+     d.period_year, d.period_month,
+     d.company_id])
+
+  -- 2. Insert earning items (fixed + pct_basic)
+  db.execute(config.conn,
+    "INSERT INTO hr_payslip_items
+       (payslip_id, component_id, component_name, type, amount, sort_order)
+     SELECT ps.id, pc.id, pc.name, 'earning',
+       CASE pc.calc_basis
+         WHEN 'fixed'     THEN COALESCE(ec.override_amount, pc.rate)
+         WHEN 'pct_basic' THEN ps.basic_salary * COALESCE(ec.override_amount, pc.rate) / 100
+         ELSE 0
+       END,
+       pc.sort_order
+     FROM hr_payslips ps
+     JOIN hr_employees e ON e.id = ps.employee_id
+     JOIN hr_payroll_components pc
+       ON pc.company_id = e.company_id AND pc.type = 'earning'
+       AND pc.is_active = TRUE AND pc.calc_basis IN ('fixed', 'pct_basic')
+     LEFT JOIN hr_employee_components ec
+       ON ec.employee_id = ps.employee_id AND ec.component_id = pc.id
+       AND ec.is_active = TRUE
+       AND (ec.effective_to IS NULL OR ec.effective_to >= CURDATE())
+     WHERE ps.payroll_run_id = ?",
+    [d.payroll_run_id])
+
+  -- 3. Hitung gross sementara (untuk pct_gross)
+  db.execute(config.conn,
+    "UPDATE hr_payslips ps
+     SET gross_earnings = ps.basic_salary + COALESCE(
+       (SELECT SUM(psi.amount) FROM hr_payslip_items psi
+        WHERE psi.payslip_id = ps.id AND psi.type = 'earning'), 0)
+     WHERE ps.payroll_run_id = ?",
+    [d.payroll_run_id])
+
+  -- 4. Insert earning items (pct_gross — butuh gross dari langkah 3)
+  db.execute(config.conn,
+    "INSERT INTO hr_payslip_items
+       (payslip_id, component_id, component_name, type, amount, sort_order)
+     SELECT ps.id, pc.id, pc.name, 'earning',
+       ps.gross_earnings * COALESCE(ec.override_amount, pc.rate) / 100,
+       pc.sort_order
+     FROM hr_payslips ps
+     JOIN hr_employees e ON e.id = ps.employee_id
+     JOIN hr_payroll_components pc
+       ON pc.company_id = e.company_id AND pc.type = 'earning'
+       AND pc.is_active = TRUE AND pc.calc_basis = 'pct_gross'
+     LEFT JOIN hr_employee_components ec
+       ON ec.employee_id = ps.employee_id AND ec.component_id = pc.id
+       AND ec.is_active = TRUE
+       AND (ec.effective_to IS NULL OR ec.effective_to >= CURDATE())
+     WHERE ps.payroll_run_id = ?",
+    [d.payroll_run_id])
+
+  -- 5. Insert deduction items (semua basis kecuali absence_cut — ditangani step 6)
+  db.execute(config.conn,
+    "INSERT INTO hr_payslip_items
+       (payslip_id, component_id, component_name, type, amount, sort_order)
+     SELECT ps.id, pc.id, pc.name, 'deduction',
+       CASE pc.calc_basis
+         WHEN 'fixed'          THEN COALESCE(ec.override_amount, pc.rate)
+         WHEN 'pct_basic'      THEN ps.basic_salary * COALESCE(ec.override_amount, pc.rate) / 100
+         WHEN 'pct_gross'      THEN ps.gross_earnings * COALESCE(ec.override_amount, pc.rate) / 100
+         WHEN 'per_absent_day' THEN COALESCE(ec.override_amount, pc.rate) * ps.absent_days
+         ELSE 0
+       END,
+       pc.sort_order
+     FROM hr_payslips ps
+     JOIN hr_employees e ON e.id = ps.employee_id
+     JOIN hr_payroll_components pc
+       ON pc.company_id = e.company_id AND pc.type = 'deduction'
+       AND pc.is_active = TRUE AND pc.category != 'absence_cut'
+     LEFT JOIN hr_employee_components ec
+       ON ec.employee_id = ps.employee_id AND ec.component_id = pc.id
+       AND ec.is_active = TRUE
+       AND (ec.effective_to IS NULL OR ec.effective_to >= CURDATE())
+     WHERE ps.payroll_run_id = ?",
+    [d.payroll_run_id])
+
+  -- 6. Insert potongan izin dari leave requests yang sudah approved bulan ini
+  db.execute(config.conn,
+    "INSERT INTO hr_payslip_items
+       (payslip_id, component_id, component_name, type, amount, note, sort_order)
+     SELECT ps.id, NULL,
+       CONCAT('Potongan Izin: ', lt.name),
+       'deduction',
+       CASE
+         WHEN lr.deduction_amount IS NOT NULL THEN lr.deduction_amount
+         WHEN lt.deduction_formula = 'per_day'
+           THEN ps.basic_salary / ps.working_days * lr.total_days
+         WHEN lt.deduction_formula = 'percentage'
+           THEN ps.basic_salary * lt.deduction_rate / 100 * lr.total_days
+         WHEN lt.deduction_formula = 'fixed_amount'
+           THEN lt.deduction_rate * lr.total_days
+         ELSE 0
+       END,
+       CONCAT(lt.name, ' ', lr.total_days, ' hari (',
+              DATE_FORMAT(lr.start_date, '%d %b'), ' s/d ',
+              DATE_FORMAT(lr.end_date,   '%d %b'), ')'),
+       90
+     FROM hr_payslips ps
+     JOIN hr_employees e ON e.id = ps.employee_id
+     JOIN hr_leave_requests lr
+       ON lr.employee_id = e.id AND lr.status = 'approved'
+       AND YEAR(lr.start_date) = ? AND MONTH(lr.start_date) = ?
+     JOIN hr_leave_types lt ON lt.id = lr.leave_type_id
+     WHERE ps.payroll_run_id = ?
+       AND lt.deduction_type != 'none'
+       AND (lt.deduction_type = 'salary_cut'
+            OR (lt.deduction_type = 'employee_choice' AND lr.deduction_choice = 'salary_cut'))",
+    [d.period_year, d.period_month, d.payroll_run_id])
+
+  -- 7. Hitung final totals
+  db.execute(config.conn,
+    "UPDATE hr_payslips ps
+     SET
+       gross_earnings   = ps.basic_salary
+                        + COALESCE((SELECT SUM(amount) FROM hr_payslip_items
+                                    WHERE payslip_id = ps.id AND type = 'earning'), 0),
+       total_deductions = COALESCE((SELECT SUM(amount) FROM hr_payslip_items
+                                    WHERE payslip_id = ps.id AND type = 'deduction'), 0),
+       net_salary       = ps.basic_salary
+                        + COALESCE((SELECT SUM(amount) FROM hr_payslip_items
+                                    WHERE payslip_id = ps.id AND type = 'earning'), 0)
+                        - COALESCE((SELECT SUM(amount) FROM hr_payslip_items
+                                    WHERE payslip_id = ps.id AND type = 'deduction'), 0)
+     WHERE ps.payroll_run_id = ?",
+    [d.payroll_run_id])
+
+  -- Return payslips yang baru di-generate
+  list_payslips(d.payroll_run_id)

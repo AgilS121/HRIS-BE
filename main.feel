@@ -27,6 +27,7 @@ import auth/routes
 import master/routes
 import master/roles_routes
 import hr/routes
+import hr/payroll_routes
 
 -- Serve uploaded contract files: /uploads/contracts/filename.pdf
 static "/uploads" -> "./uploads"

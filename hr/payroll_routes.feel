@@ -1,0 +1,176 @@
+-- hr/payroll_routes.feel — payroll components, runs, payslips
+
+import shared/response
+import shared/auth_middleware
+import hr/payroll_service
+
+-- ─── Payroll Components ───────────────────────────────────────────────────────
+
+route GET "/api/hr/payroll-components" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(payroll_service.list_payroll_components(company_id))
+}
+
+route POST "/api/hr/payroll-components" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.code == nothing or body.name == nothing or body.type == nothing
+    -> respond 400 response.bad_request("company_id, code, name, type are required")
+    otherwise -> do {
+      let new_id = payroll_service.create_payroll_component(body)
+      respond 201 response.ok(payroll_service.find_payroll_component(new_id))
+    }
+}
+
+route PUT "/api/hr/payroll-components/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let comp   = payroll_service.find_payroll_component(id)
+  when comp == nothing
+    -> respond 404 response.not_found("payroll component")
+    otherwise -> do {
+      payroll_service.update_payroll_component(map {
+        id:         id,
+        name:       map.get(body, "name", comp.name),
+        category:   map.get(body, "category", comp.category),
+        calc_basis: map.get(body, "calc_basis", comp.calc_basis),
+        rate:       map.get(body, "rate", comp.rate),
+        is_taxable: map.get(body, "is_taxable", comp.is_taxable),
+        sort_order: map.get(body, "sort_order", comp.sort_order)
+      })
+      respond response.ok(payroll_service.find_payroll_component(id))
+    }
+}
+
+route DELETE "/api/hr/payroll-components/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let comp   = payroll_service.find_payroll_component(id)
+  when comp == nothing
+    -> respond 404 response.not_found("payroll component")
+    otherwise -> do {
+      payroll_service.delete_payroll_component(id)
+      respond response.ok(map { message: "component deactivated" })
+    }
+}
+
+-- ─── Employee Component Overrides ────────────────────────────────────────────
+
+route GET "/api/hr/employees/:id/components" -> do {
+  let claims = auth_middleware.require_auth(request)
+  respond response.ok(payroll_service.list_employee_components(id))
+}
+
+route POST "/api/hr/employees/:id/components" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.component_id == nothing or body.effective_from == nothing
+    -> respond 400 response.bad_request("component_id, effective_from are required")
+    otherwise -> do {
+      payroll_service.set_employee_component(map {
+        employee_id:     id,
+        component_id:    body.component_id,
+        override_amount: body.override_amount,
+        effective_from:  body.effective_from,
+        note:            body.note
+      })
+      respond response.ok(payroll_service.list_employee_components(id))
+    }
+}
+
+route DELETE "/api/hr/employee-components/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  payroll_service.remove_employee_component(id)
+  respond response.ok(map { message: "override removed" })
+}
+
+-- ─── Payroll Runs ─────────────────────────────────────────────────────────────
+
+route GET "/api/hr/payroll-runs" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(payroll_service.list_payroll_runs(company_id))
+}
+
+route POST "/api/hr/payroll-runs" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.period_year == nothing or body.period_month == nothing
+    -> respond 400 response.bad_request("company_id, period_year, period_month are required")
+    otherwise -> do {
+      let new_id = payroll_service.create_payroll_run(body)
+      respond 201 response.ok(payroll_service.find_payroll_run(new_id))
+    }
+}
+
+route POST "/api/hr/payroll-runs/:id/generate" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let run    = payroll_service.find_payroll_run(id)
+  when run == nothing
+    -> respond 404 response.not_found("payroll run")
+    otherwise -> do {
+      when run.status != "draft"
+        -> respond 409 response.conflict("only draft runs can be regenerated")
+        otherwise -> do {
+          let payslips = payroll_service.generate_payslips(map {
+            payroll_run_id: id,
+            company_id:     run.company_id,
+            period_year:    run.period_year,
+            period_month:   run.period_month,
+            working_days:   run.working_days
+          })
+          respond response.ok(payslips)
+        }
+    }
+}
+
+route PUT "/api/hr/payroll-runs/:id/lock" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let run    = payroll_service.find_payroll_run(id)
+  when run == nothing
+    -> respond 404 response.not_found("payroll run")
+    otherwise -> do {
+      when run.status != "draft"
+        -> respond 409 response.conflict("run is already locked or paid")
+        otherwise -> do {
+          payroll_service.lock_payroll_run(map { id: id, user_id: claims.user_id })
+          respond response.ok(payroll_service.find_payroll_run(id))
+        }
+    }
+}
+
+route PUT "/api/hr/payroll-runs/:id/paid" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let run    = payroll_service.find_payroll_run(id)
+  when run == nothing
+    -> respond 404 response.not_found("payroll run")
+    otherwise -> do {
+      when run.status != "locked"
+        -> respond 409 response.conflict("run must be locked before marking as paid")
+        otherwise -> do {
+          payroll_service.mark_payroll_paid(id)
+          respond response.ok(payroll_service.find_payroll_run(id))
+        }
+    }
+}
+
+-- ─── Payslips ─────────────────────────────────────────────────────────────────
+
+route GET "/api/hr/payroll-runs/:id/payslips" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let run    = payroll_service.find_payroll_run(id)
+  when run == nothing
+    -> respond 404 response.not_found("payroll run")
+    otherwise -> respond response.ok(payroll_service.list_payslips(id))
+}
+
+route GET "/api/hr/payslips/:id" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let payslip = payroll_service.get_payslip(id)
+  when payslip == nothing
+    -> respond 404 response.not_found("payslip")
+    otherwise -> respond response.ok(map {
+      payslip: payslip,
+      items:   payroll_service.get_payslip_items(id)
+    })
+}
