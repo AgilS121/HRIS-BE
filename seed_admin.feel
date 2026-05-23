@@ -1,0 +1,26 @@
+-- seed_admin.feel — bikin user admin@hris.local dengan password "admin123".
+-- Jalankan setelah migrate: feel run seed_admin.feel
+-- IDEMPOTENT: aman dijalankan ulang, tidak akan double-insert.
+
+import config
+
+let email = "admin@hris.local"
+let password_plain = "admin123"
+
+let existing = db.query_one(config.conn, "SELECT id FROM auth_users WHERE email = ?", [email])
+
+when existing != nothing -> do {
+    show -> "[seed] admin user sudah ada (id={existing.id}), skip"
+}
+otherwise -> do {
+    let hashed = crypto.hash_password(password_plain)
+    db.exec(
+      config.conn,
+      "INSERT INTO auth_users (email, password_hash, name) VALUES (?, ?, ?)",
+      [email, hashed, "System Admin"]
+    )
+    let new_id = db.last_id(config.conn)
+    show -> "[seed] admin user created (id={new_id})"
+    show -> "[seed] login: admin@hris.local / admin123"
+    show -> "[seed] !!! PENTING: ganti password ini di production !!!"
+}

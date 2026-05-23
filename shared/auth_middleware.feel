@@ -1,0 +1,51 @@
+-- shared/auth_middleware.feel — JWT verification helpers.
+-- Usage di handler:
+--
+--   import shared/auth_middleware as authmw
+--
+--   route GET "/api/me" -> do {
+--     let claims = authmw.require_auth(request)
+--     -- kalau JWT invalid/missing, sudah throw → caller dapat 401
+--     respond ok(map { user_id: claims.user_id, email: claims.email })
+--   }
+
+import config
+
+-- Ekstrak bearer token dari Authorization header. Return string atau nothing.
+define extract_token taking req ->
+  do {
+    let auth_header = map.get(req.headers, "authorization", "")
+    when string.starts_with(auth_header, "Bearer ")
+      -> string.slice(auth_header, 7, length(auth_header))
+      otherwise -> nothing
+  }
+
+-- Verify token, return claims. Throw map { status, ... } on fail.
+define require_auth taking req ->
+  do {
+    let token = extract_token(req)
+    when token == nothing
+      -> throw map { status: 401, error: "unauthorized", message: "missing bearer token" }
+      otherwise -> do {
+        let claims = try
+          crypto.jwt_verify(token, config.jwt_secret)
+        catch err ->
+          throw map { status: 401, error: "unauthorized", message: "invalid token: {err}" }
+        -- Cek expiry (claims.exp dalam Unix seconds)
+        when claims.exp < time.now()
+          -> throw map { status: 401, error: "unauthorized", message: "token expired" }
+          otherwise -> claims
+      }
+  }
+
+-- Optional auth — kembalikan claims kalau valid, nothing kalau tidak.
+-- Berguna untuk endpoint yang behavior-nya beda untuk authenticated vs guest.
+define optional_auth taking req ->
+  do {
+    let token = extract_token(req)
+    when token == nothing
+      -> nothing
+      otherwise -> try
+        crypto.jwt_verify(token, config.jwt_secret)
+      catch err -> nothing
+  }

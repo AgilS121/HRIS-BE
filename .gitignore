@@ -1,0 +1,11 @@
+.env
+*.exe
+*.bin
+*.log
+
+__pycache__/
+*.pyc
+
+.vscode/
+.idea/
+*.swp

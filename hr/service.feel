@@ -1,0 +1,102 @@
+-- hr/service.feel — HR business logic.
+-- Cross-module: find_employee(id) is the public API for other modules.
+
+import config
+
+-- ─── Employees ───────────────────────────────────────────────────────────────
+
+define list_employees taking company_id ->
+  db.query(config.conn,
+    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.company_id = ? AND e.status != 'terminated' ORDER BY e.name",
+    [company_id])
+
+define find_employee taking id ->
+  db.query_one(config.conn,
+    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.id = ?",
+    [id])
+
+define create_employee taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_employees (company_id, department_id, position_id, employee_number, name, email, phone, hire_date, employment_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [d.company_id, d.department_id, d.position_id, d.employee_number, d.name,
+       map.get(d, "email", nothing), map.get(d, "phone", nothing),
+       d.hire_date, map.get(d, "employment_type", "permanent")])
+    db.last_id(config.conn)
+  }
+
+define update_employee taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_employees SET department_id=?, position_id=?, name=?, email=?, phone=?, employment_type=?, updated_at=NOW() WHERE id=?",
+    [d.department_id, d.position_id, d.name, map.get(d, "email", nothing),
+     map.get(d, "phone", nothing), map.get(d, "employment_type", "permanent"), d.id])
+
+define terminate_employee taking id ->
+  db.exec(config.conn,
+    "UPDATE hr_employees SET status='terminated', updated_at=NOW() WHERE id=?",
+    [id])
+
+-- ─── Attendance ──────────────────────────────────────────────────────────────
+
+define get_today_attendance taking employee_id ->
+  db.query_one(config.conn,
+    "SELECT * FROM hr_attendance WHERE employee_id = ? AND DATE(clock_in) = CURDATE()",
+    [employee_id])
+
+define clock_in taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_attendance (employee_id, clock_in, clock_in_lat, clock_in_lng, note) VALUES (?, NOW(), ?, ?, ?)",
+      [d.employee_id, map.get(d, "lat", nothing), map.get(d, "lng", nothing), map.get(d, "note", nothing)])
+    db.last_id(config.conn)
+  }
+
+define clock_out taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_attendance SET clock_out=NOW(), clock_out_lat=?, clock_out_lng=?, work_minutes=TIMESTAMPDIFF(MINUTE, clock_in, NOW()) WHERE id=? AND clock_out IS NULL",
+    [map.get(d, "lat", nothing), map.get(d, "lng", nothing), d.attendance_id])
+
+define list_attendance taking d ->
+  db.query(config.conn,
+    "SELECT a.*, e.name AS employee_name FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE e.company_id = ? AND DATE(a.clock_in) BETWEEN ? AND ? ORDER BY a.clock_in DESC",
+    [d.company_id, d.date_from, d.date_to])
+
+-- ─── Leave ───────────────────────────────────────────────────────────────────
+
+define list_leave_types taking company_id ->
+  db.query(config.conn,
+    "SELECT * FROM hr_leave_types WHERE company_id = ? AND is_active = 1 ORDER BY name",
+    [company_id])
+
+define get_leave_balance taking d ->
+  db.query_one(config.conn,
+    "SELECT * FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?",
+    [d.employee_id, d.leave_type_id, d.year])
+
+define list_leave_requests taking d ->
+  db.query(config.conn,
+    "SELECT r.*, e.name AS employee_name, lt.name AS leave_type_name FROM hr_leave_requests r JOIN hr_employees e ON r.employee_id = e.id JOIN hr_leave_types lt ON r.leave_type_id = lt.id WHERE e.company_id = ? ORDER BY r.created_at DESC",
+    [d.company_id])
+
+define find_leave_request taking id ->
+  db.query_one(config.conn,
+    "SELECT * FROM hr_leave_requests WHERE id = ?",
+    [id])
+
+define create_leave_request taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_leave_requests (employee_id, leave_type_id, start_date, end_date, total_days, reason) VALUES (?, ?, ?, ?, ?, ?)",
+      [d.employee_id, d.leave_type_id, d.start_date, d.end_date, d.total_days, map.get(d, "reason", nothing)])
+    db.last_id(config.conn)
+  }
+
+define approve_leave_request taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_leave_requests SET status='approved', approved_by=?, approved_at=NOW(), updated_at=NOW() WHERE id=? AND status='pending'",
+    [d.approver_id, d.id])
+
+define reject_leave_request taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_leave_requests SET status='rejected', approved_by=?, approved_at=NOW(), rejection_note=?, updated_at=NOW() WHERE id=? AND status='pending'",
+    [d.approver_id, map.get(d, "note", nothing), d.id])

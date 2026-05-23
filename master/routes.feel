@@ -1,0 +1,170 @@
+-- master/routes.feel — company, department, position CRUD.
+-- All endpoints require auth. company_id comes from body or query.
+
+import shared/response
+import shared/auth_middleware
+import master/service
+
+-- ─── Companies ───────────────────────────────────────────────────────────────
+
+route GET "/api/master/companies" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let rows   = service.list_companies(nothing)
+  respond response.ok(rows)
+}
+
+route POST "/api/master/companies" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.name == nothing or body.code == nothing
+    -> respond 400 response.bad_request("name and code are required")
+    otherwise -> do {
+      let new_id = service.create_company(body)
+      let company = service.find_company(new_id)
+      respond 201 response.ok(company)
+    }
+}
+
+route GET "/api/master/companies/:id" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let company = service.find_company(id)
+  when company == nothing
+    -> respond 404 response.not_found("company")
+    otherwise -> respond response.ok(company)
+}
+
+route PUT "/api/master/companies/:id" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let company = service.find_company(id)
+  when company == nothing
+    -> respond 404 response.not_found("company")
+    otherwise -> do {
+      when body.name == nothing or body.code == nothing
+        -> respond 400 response.bad_request("name and code are required")
+        otherwise -> do {
+          let d = map { id: id, name: body.name, code: body.code, address: body.address, phone: body.phone, email: body.email }
+          service.update_company(d)
+          respond response.ok(service.find_company(id))
+        }
+    }
+}
+
+route DELETE "/api/master/companies/:id" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let company = service.find_company(id)
+  when company == nothing
+    -> respond 404 response.not_found("company")
+    otherwise -> do {
+      service.delete_company(id)
+      respond response.ok(map { message: "company deleted" })
+    }
+}
+
+-- ─── Departments ─────────────────────────────────────────────────────────────
+
+route GET "/api/master/departments" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id query param is required")
+    otherwise -> respond response.ok(service.list_departments(company_id))
+}
+
+route POST "/api/master/departments" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.name == nothing
+    -> respond 400 response.bad_request("company_id and name are required")
+    otherwise -> do {
+      let new_id = service.create_department(body)
+      respond 201 response.ok(service.find_department(new_id))
+    }
+}
+
+route GET "/api/master/departments/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let dept   = service.find_department(id)
+  when dept == nothing
+    -> respond 404 response.not_found("department")
+    otherwise -> respond response.ok(dept)
+}
+
+route PUT "/api/master/departments/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let dept   = service.find_department(id)
+  when dept == nothing
+    -> respond 404 response.not_found("department")
+    otherwise -> do {
+      when body.name == nothing
+        -> respond 400 response.bad_request("name is required")
+        otherwise -> do {
+          let d = map { id: id, name: body.name, code: body.code, parent_id: body.parent_id }
+          service.update_department(d)
+          respond response.ok(service.find_department(id))
+        }
+    }
+}
+
+route DELETE "/api/master/departments/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let dept   = service.find_department(id)
+  when dept == nothing
+    -> respond 404 response.not_found("department")
+    otherwise -> do {
+      service.delete_department(id)
+      respond response.ok(map { message: "department deleted" })
+    }
+}
+
+-- ─── Positions ───────────────────────────────────────────────────────────────
+
+route GET "/api/master/positions" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id query param is required")
+    otherwise -> respond response.ok(service.list_positions(company_id))
+}
+
+route POST "/api/master/positions" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.name == nothing
+    -> respond 400 response.bad_request("company_id and name are required")
+    otherwise -> do {
+      let new_id = service.create_position(body)
+      respond 201 response.ok(service.find_position(new_id))
+    }
+}
+
+route GET "/api/master/positions/:id" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let position = service.find_position(id)
+  when position == nothing
+    -> respond 404 response.not_found("position")
+    otherwise -> respond response.ok(position)
+}
+
+route PUT "/api/master/positions/:id" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let position = service.find_position(id)
+  when position == nothing
+    -> respond 404 response.not_found("position")
+    otherwise -> do {
+      when body.name == nothing
+        -> respond 400 response.bad_request("name is required")
+        otherwise -> do {
+          let d = map { id: id, name: body.name, code: body.code, level: body.level }
+          service.update_position(d)
+          respond response.ok(service.find_position(id))
+        }
+    }
+}
+
+route DELETE "/api/master/positions/:id" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let position = service.find_position(id)
+  when position == nothing
+    -> respond 404 response.not_found("position")
+    otherwise -> do {
+      service.delete_position(id)
+      respond response.ok(map { message: "position deleted" })
+    }
+}

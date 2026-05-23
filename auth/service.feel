@@ -1,0 +1,25 @@
+-- auth/service.feel — auth business logic.
+-- Public API: find_user_by_id is used by other modules via service.feel.
+
+import config
+
+define find_user_by_email taking email ->
+  db.query_one(
+    config.conn,
+    "SELECT id, email, password_hash, name, is_active FROM auth_users WHERE email = ? AND is_active = 1",
+    [email]
+  )
+
+define find_user_by_id taking id ->
+  db.query_one(
+    config.conn,
+    "SELECT id, email, name FROM auth_users WHERE id = ? AND is_active = 1",
+    [id]
+  )
+
+define make_token taking user ->
+  do {
+    let exp    = int(time.now()) + 86400
+    let claims = map { user_id: user.id, email: user.email, name: user.name, exp: exp }
+    crypto.jwt_sign(claims, config.jwt_secret)
+  }

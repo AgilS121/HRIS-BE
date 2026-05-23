@@ -1,0 +1,11 @@
+-- config.feel — env loading + DB connection + shared constants.
+
+let db_url     = env.get("database_url", "mysql://root:@localhost:3306/hris_feel")
+let jwt_secret = env.get("jwt_secret", "dev-secret-change-me-min-32-chars-long")
+let port       = int(env.get("port", "3000"))
+let cors_on    = env.get("cors", "true")
+
+let conn = db.connect(db_url)
+
+show -> "[config] DB connected: {db_url}"
+show -> "[config] Port: {port}, CORS: {cors_on}"

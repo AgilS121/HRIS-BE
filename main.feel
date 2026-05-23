@@ -1,0 +1,32 @@
+-- main.feel — HRIS backend entry point.
+--
+-- Module discipline:
+--   - Setiap modul (auth/master/hr) punya routes.feel sendiri
+--   - Cross-module access HARUS via {module}/service.feel — bukan SELECT langsung
+--   - Tabel pakai prefix per modul: auth_*, master_*, hr_*
+--
+-- Run:
+--   feel run main.feel             (dev mode, interpreter)
+--   feel build main.feel -o hris   (production binary)
+
+import config
+
+-- Public endpoints (no auth)
+route GET "/" -> respond map {
+  name: "HRIS API",
+  version: "0.1.0",
+  modules: ["auth", "master", "hr"]
+}
+
+route GET "/health" -> respond map {
+  ok: true,
+  time: time.now()
+}
+
+import auth/routes
+import master/routes
+import hr/routes
+
+-- NOTE: Feel parser only accepts a NUMBER literal after `on`, not an expression.
+-- Fix: serve on config.port cors — tracked as future improvement.
+serve on 3000 cors

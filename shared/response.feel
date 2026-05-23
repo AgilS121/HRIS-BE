@@ -1,0 +1,34 @@
+-- shared/response.feel — standard response envelopes.
+-- Pakai biar shape response konsisten di semua endpoint.
+
+-- Success: respond ok(data)
+define ok taking data ->
+  map { success: true, data: data }
+
+-- Created: respond created(data)
+define created taking data ->
+  map { success: true, data: data }
+
+-- Error 400: bad request (validation, malformed input)
+define bad_request taking message ->
+  map { success: false, error: "bad_request", message: message }
+
+-- Error 401: missing/invalid auth
+define unauthorized taking message ->
+  map { success: false, error: "unauthorized", message: message }
+
+-- Error 403: authenticated but not allowed
+define forbidden taking message ->
+  map { success: false, error: "forbidden", message: message }
+
+-- Error 404
+define not_found taking resource ->
+  map { success: false, error: "not_found", message: "{resource} tidak ditemukan" }
+
+-- Error 409: conflict (duplicate, version mismatch)
+define conflict taking message ->
+  map { success: false, error: "conflict", message: message }
+
+-- Error 500: unhandled
+define server_error taking detail ->
+  map { success: false, error: "server_error", message: detail }

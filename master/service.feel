@@ -1,0 +1,94 @@
+-- master/service.feel — master data business logic.
+-- Exposed as cross-module API: find_company, find_department, find_position.
+
+import config
+
+-- ─── Companies ───────────────────────────────────────────────────────────────
+
+define list_companies taking _ ->
+  db.query(config.conn,
+    "SELECT * FROM master_companies WHERE is_active = 1 ORDER BY name",
+    [])
+
+define find_company taking id ->
+  db.query_one(config.conn,
+    "SELECT * FROM master_companies WHERE id = ?",
+    [id])
+
+define create_company taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO master_companies (name, code, address, phone, email) VALUES (?, ?, ?, ?, ?)",
+      [d.name, d.code, map.get(d, "address", nothing), map.get(d, "phone", nothing), map.get(d, "email", nothing)])
+    db.last_id(config.conn)
+  }
+
+define update_company taking d ->
+  db.exec(config.conn,
+    "UPDATE master_companies SET name=?, code=?, address=?, phone=?, email=?, updated_at=NOW() WHERE id=?",
+    [d.name, d.code, map.get(d, "address", nothing), map.get(d, "phone", nothing), map.get(d, "email", nothing), d.id])
+
+define delete_company taking id ->
+  db.exec(config.conn,
+    "UPDATE master_companies SET is_active=0 WHERE id=?",
+    [id])
+
+-- ─── Departments ─────────────────────────────────────────────────────────────
+
+define list_departments taking company_id ->
+  db.query(config.conn,
+    "SELECT d.*, p.name AS parent_name FROM master_departments d LEFT JOIN master_departments p ON d.parent_id = p.id WHERE d.company_id = ? AND d.is_active = 1 ORDER BY d.name",
+    [company_id])
+
+define find_department taking id ->
+  db.query_one(config.conn,
+    "SELECT * FROM master_departments WHERE id = ?",
+    [id])
+
+define create_department taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO master_departments (company_id, name, code, parent_id) VALUES (?, ?, ?, ?)",
+      [d.company_id, d.name, map.get(d, "code", nothing), map.get(d, "parent_id", nothing)])
+    db.last_id(config.conn)
+  }
+
+define update_department taking d ->
+  db.exec(config.conn,
+    "UPDATE master_departments SET name=?, code=?, parent_id=?, updated_at=NOW() WHERE id=?",
+    [d.name, map.get(d, "code", nothing), map.get(d, "parent_id", nothing), d.id])
+
+define delete_department taking id ->
+  db.exec(config.conn,
+    "UPDATE master_departments SET is_active=0 WHERE id=?",
+    [id])
+
+-- ─── Positions ───────────────────────────────────────────────────────────────
+
+define list_positions taking company_id ->
+  db.query(config.conn,
+    "SELECT * FROM master_positions WHERE company_id = ? AND is_active = 1 ORDER BY level, name",
+    [company_id])
+
+define find_position taking id ->
+  db.query_one(config.conn,
+    "SELECT * FROM master_positions WHERE id = ?",
+    [id])
+
+define create_position taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO master_positions (company_id, name, code, level) VALUES (?, ?, ?, ?)",
+      [d.company_id, d.name, map.get(d, "code", nothing), map.get(d, "level", 1)])
+    db.last_id(config.conn)
+  }
+
+define update_position taking d ->
+  db.exec(config.conn,
+    "UPDATE master_positions SET name=?, code=?, level=?, updated_at=NOW() WHERE id=?",
+    [d.name, map.get(d, "code", nothing), map.get(d, "level", 1), d.id])
+
+define delete_position taking id ->
+  db.exec(config.conn,
+    "UPDATE master_positions SET is_active=0 WHERE id=?",
+    [id])

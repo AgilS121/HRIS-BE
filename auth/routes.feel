@@ -1,0 +1,50 @@
+-- auth/routes.feel — login, logout, me endpoints.
+-- Import in main.feel: import auth/routes
+
+import config
+import shared/response
+import shared/auth_middleware
+import auth/service
+
+-- POST /api/auth/login — verify credentials, issue JWT
+route POST "/api/auth/login" -> do {
+  let email    = body.email
+  let password = body.password
+  when email == nothing or password == nothing
+    -> respond 400 response.bad_request("email and password are required")
+    otherwise -> do {
+      let user = service.find_user_by_email(email)
+      when user == nothing
+        -> respond 401 response.unauthorized("invalid email or password")
+        otherwise -> do {
+          when not crypto.verify_password(password, user.password_hash)
+            -> respond 401 response.unauthorized("invalid email or password")
+            otherwise -> do {
+              let token = service.make_token(user)
+              respond response.ok(map {
+                token: token,
+                user: map { id: user.id, email: user.email, name: user.name }
+              })
+            }
+        }
+    }
+}
+
+-- GET /api/auth/me — return authenticated user profile
+route GET "/api/auth/me" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let user   = service.find_user_by_id(claims.user_id)
+  when user == nothing
+    -> respond 404 response.not_found("user")
+    otherwise -> respond response.ok(map {
+      id:    user.id,
+      email: user.email,
+      name:  user.name
+    })
+}
+
+-- POST /api/auth/logout — stateless JWT: acknowledge and tell client to clear
+route POST "/api/auth/logout" -> do {
+  let claims = auth_middleware.require_auth(request)
+  respond response.ok(map { message: "logged out" })
+}

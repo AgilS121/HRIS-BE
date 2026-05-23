@@ -1,0 +1,184 @@
+-- hr/routes.feel — employees, attendance, leave endpoints.
+
+import shared/response
+import shared/auth_middleware
+import hr/service
+
+-- ─── Employees ───────────────────────────────────────────────────────────────
+
+route GET "/api/hr/employees" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id query param is required")
+    otherwise -> respond response.ok(service.list_employees(company_id))
+}
+
+route POST "/api/hr/employees" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.name == nothing or body.employee_number == nothing or body.hire_date == nothing
+    -> respond 400 response.bad_request("company_id, name, employee_number, hire_date are required")
+    otherwise -> do {
+      let new_id = service.create_employee(body)
+      respond 201 response.ok(service.find_employee(new_id))
+    }
+}
+
+route GET "/api/hr/employees/:id" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee(id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee")
+    otherwise -> respond response.ok(employee)
+}
+
+route PUT "/api/hr/employees/:id" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee(id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee")
+    otherwise -> do {
+      when body.name == nothing
+        -> respond 400 response.bad_request("name is required")
+        otherwise -> do {
+          let d = map {
+            id:              id,
+            department_id:   body.department_id,
+            position_id:     body.position_id,
+            name:            body.name,
+            email:           body.email,
+            phone:           body.phone,
+            employment_type: body.employment_type
+          }
+          service.update_employee(d)
+          respond response.ok(service.find_employee(id))
+        }
+    }
+}
+
+route DELETE "/api/hr/employees/:id" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee(id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee")
+    otherwise -> do {
+      service.terminate_employee(id)
+      respond response.ok(map { message: "employee terminated" })
+    }
+}
+
+-- ─── Attendance ──────────────────────────────────────────────────────────────
+
+route POST "/api/hr/attendance/clock-in" -> do {
+  let claims      = auth_middleware.require_auth(request)
+  let employee_id = body.employee_id
+  when employee_id == nothing
+    -> respond 400 response.bad_request("employee_id is required")
+    otherwise -> do {
+      let existing = service.get_today_attendance(employee_id)
+      when existing != nothing
+        -> respond 409 response.conflict("already clocked in today")
+        otherwise -> do {
+          let d = map { employee_id: employee_id, lat: body.lat, lng: body.lng, note: body.note }
+          let att_id = service.clock_in(d)
+          respond 201 response.ok(map { attendance_id: att_id, message: "clock-in recorded" })
+        }
+    }
+}
+
+route POST "/api/hr/attendance/clock-out" -> do {
+  let claims      = auth_middleware.require_auth(request)
+  let employee_id = body.employee_id
+  when employee_id == nothing
+    -> respond 400 response.bad_request("employee_id is required")
+    otherwise -> do {
+      let existing = service.get_today_attendance(employee_id)
+      when existing == nothing
+        -> respond 404 response.not_found("clock-in record for today")
+        otherwise -> do {
+          when existing.clock_out != nothing
+            -> respond 409 response.conflict("already clocked out today")
+            otherwise -> do {
+              let d = map { attendance_id: existing.id, lat: body.lat, lng: body.lng }
+              service.clock_out(d)
+              respond response.ok(map { message: "clock-out recorded" })
+            }
+        }
+    }
+}
+
+route GET "/api/hr/attendance" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  let date_from  = map.get(query, "date_from", nothing)
+  let date_to    = map.get(query, "date_to", nothing)
+  when company_id == nothing or date_from == nothing or date_to == nothing
+    -> respond 400 response.bad_request("company_id, date_from, date_to query params are required")
+    otherwise -> do {
+      let d = map { company_id: company_id, date_from: date_from, date_to: date_to }
+      respond response.ok(service.list_attendance(d))
+    }
+}
+
+-- ─── Leave ───────────────────────────────────────────────────────────────────
+
+route GET "/api/hr/leave-types" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id query param is required")
+    otherwise -> respond response.ok(service.list_leave_types(company_id))
+}
+
+route GET "/api/hr/leave-requests" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id query param is required")
+    otherwise -> do {
+      let d = map { company_id: company_id }
+      respond response.ok(service.list_leave_requests(d))
+    }
+}
+
+route POST "/api/hr/leave-requests" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.employee_id == nothing or body.leave_type_id == nothing or body.start_date == nothing or body.end_date == nothing or body.total_days == nothing
+    -> respond 400 response.bad_request("employee_id, leave_type_id, start_date, end_date, total_days are required")
+    otherwise -> do {
+      let new_id = service.create_leave_request(body)
+      respond 201 response.ok(service.find_leave_request(new_id))
+    }
+}
+
+route PUT "/api/hr/leave-requests/:id/approve" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let leave_r = service.find_leave_request(id)
+  when leave_r == nothing
+    -> respond 404 response.not_found("leave request")
+    otherwise -> do {
+      when leave_r.status != "pending"
+        -> respond 409 response.conflict("leave request is no longer pending")
+        otherwise -> do {
+          let d = map { id: id, approver_id: claims.user_id }
+          service.approve_leave_request(d)
+          respond response.ok(service.find_leave_request(id))
+        }
+    }
+}
+
+route PUT "/api/hr/leave-requests/:id/reject" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let leave_r = service.find_leave_request(id)
+  when leave_r == nothing
+    -> respond 404 response.not_found("leave request")
+    otherwise -> do {
+      when leave_r.status != "pending"
+        -> respond 409 response.conflict("leave request is no longer pending")
+        otherwise -> do {
+          let d = map { id: id, approver_id: claims.user_id, note: body.note }
+          service.reject_leave_request(d)
+          respond response.ok(service.find_leave_request(id))
+        }
+    }
+}
