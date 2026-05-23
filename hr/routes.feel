@@ -4,6 +4,7 @@ import shared/response
 import shared/auth_middleware
 import hr/service
 import auth/temp_service
+import config
 
 -- ─── Employees ───────────────────────────────────────────────────────────────
 
@@ -482,15 +483,17 @@ route POST "/api/hr/leave-requests" -> do {
 }
 
 route PUT "/api/hr/leave-requests/:id/approve" -> do {
-  let claims  = auth_middleware.require_auth(request)
-  let leave_r = service.find_leave_request(id)
+  let claims   = auth_middleware.require_auth(request)
+  let leave_r  = service.find_leave_request(id)
   when leave_r == nothing
     -> respond 404 response.not_found("leave request")
     otherwise -> do {
       when leave_r.status != "pending"
         -> respond 409 response.conflict("leave request is no longer pending")
         otherwise -> do {
-          service.approve_leave_request(map { id: id, approver_id: claims.user_id })
+          let approver_emp = db.query_one(config.conn, "SELECT id FROM hr_employees WHERE user_id = ?", [claims.user_id])
+          let approver_emp_id = when approver_emp != nothing -> approver_emp.id otherwise -> nothing
+          service.approve_leave_request(map { id: id, approver_id: approver_emp_id })
           respond response.ok(service.find_leave_request(id))
         }
     }
@@ -505,7 +508,9 @@ route PUT "/api/hr/leave-requests/:id/reject" -> do {
       when leave_r.status != "pending"
         -> respond 409 response.conflict("leave request is no longer pending")
         otherwise -> do {
-          service.reject_leave_request(map { id: id, approver_id: claims.user_id, note: body.note })
+          let approver_emp = db.query_one(config.conn, "SELECT id FROM hr_employees WHERE user_id = ?", [claims.user_id])
+          let approver_emp_id = when approver_emp != nothing -> approver_emp.id otherwise -> nothing
+          service.reject_leave_request(map { id: id, approver_id: approver_emp_id, note: body.note })
           respond response.ok(service.find_leave_request(id))
         }
     }
