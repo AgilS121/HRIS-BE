@@ -347,3 +347,36 @@ route DELETE "/api/master/rosters/:id" -> do {
   service.delete_roster(id)
   respond response.ok(map { message: "roster deleted" })
 }
+
+-- ─── Holidays ─────────────────────────────────────────────────────────────────
+
+route GET "/api/master/holidays" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  let year       = map.get(query, "year", nothing)
+  let month      = map.get(query, "month", nothing)
+  when company_id == nothing or year == nothing or month == nothing
+    -> respond 400 response.bad_request("company_id, year, month are required")
+    otherwise -> respond response.ok(service.list_holidays(map { company_id: company_id, year: year, month: month }))
+}
+
+route POST "/api/master/holidays" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.date == nothing or body.name == nothing
+    -> respond 400 response.bad_request("company_id, date, name are required")
+    otherwise -> do {
+      let new_id = service.create_holiday(body)
+      respond 201 response.ok(service.find_holiday(new_id))
+    }
+}
+
+route DELETE "/api/master/holidays/:id" -> do {
+  let claims  = auth_middleware.require_auth(request)
+  let holiday = service.find_holiday(id)
+  when holiday == nothing
+    -> respond 404 response.not_found("holiday")
+    otherwise -> do {
+      service.delete_holiday(id)
+      respond response.ok(map { message: "holiday deleted" })
+    }
+}

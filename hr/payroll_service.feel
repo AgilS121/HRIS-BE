@@ -335,3 +335,14 @@ define generate_payslips taking d ->
     -- Return payslips yang baru di-generate
     list_payslips(d.payroll_run_id)
   }
+
+-- ─── Employee Self-Service ────────────────────────────────────────────────────
+
+define list_my_payslips taking employee_id ->
+  db.query(config.conn,
+    "SELECT ps.*, pr.period_year, pr.period_month, pr.status AS run_status
+     FROM hr_payslips ps
+     JOIN hr_payroll_runs pr ON pr.id = ps.payroll_run_id
+     WHERE ps.employee_id = ?
+     ORDER BY pr.period_year DESC, pr.period_month DESC",
+    [employee_id])

@@ -221,6 +221,18 @@ route POST "/api/hr/payroll/batch-components" -> do {
     }
 }
 
+-- ─── Employee Self-Service ────────────────────────────────────────────────────
+
+-- GET /api/hr/my-payslips?employee_id=X
+-- Returns payslip list for a specific employee (self-service or HR viewing).
+route GET "/api/hr/my-payslips" -> do {
+  let claims      = auth_middleware.require_auth(request)
+  let employee_id = map.get(query, "employee_id", nothing)
+  when employee_id == nothing
+    -> respond 400 response.bad_request("employee_id is required")
+    otherwise -> respond response.ok(payroll_service.list_my_payslips(employee_id))
+}
+
 -- ─── BPJS & Tax Seed ──────────────────────────────────────────────────────────
 
 -- POST /api/hr/payroll/seed-bpjs?company_id=X
