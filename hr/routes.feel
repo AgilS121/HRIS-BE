@@ -256,6 +256,12 @@ route POST "/api/hr/attendance/clock-in" -> do {
           -- Auto-close any unclosed record from previous days
           service.auto_close_previous_day(employee_id)
 
+          -- Geofence check
+          let geo = service.check_geofence(map { company_id: emp.company_id, lat: body.lat, lng: body.lng })
+          when geo.ok == false
+            -> respond 403 response.bad_request("You are {geo.distance}m from the office. Must be within {geo.radius}m to clock in.")
+            otherwise ->
+
           -- Determine late status + deduction from work schedule
           let late_info  = service.get_clock_in_status(emp.company_id)
           let mins_late  = late_info.minutes_late

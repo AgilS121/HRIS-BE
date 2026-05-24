@@ -7,17 +7,17 @@ import config
 
 define list_employees taking company_id ->
   db.query(config.conn,
-    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.company_id = ? AND e.status NOT IN ('resigned','terminated') ORDER BY e.full_name",
+    "SELECT e.*, d.name AS department_name, p.name AS position_name, s.full_name AS supervisor_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id LEFT JOIN hr_employees s ON s.id = e.reporting_to WHERE e.company_id = ? AND e.status NOT IN ('resigned','terminated') ORDER BY e.full_name",
     [company_id])
 
 define find_employee taking id ->
   db.query_one(config.conn,
-    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.id = ?",
+    "SELECT e.*, d.name AS department_name, p.name AS position_name, s.full_name AS supervisor_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id LEFT JOIN hr_employees s ON s.id = e.reporting_to WHERE e.id = ?",
     [id])
 
 define find_employee_by_user_id taking user_id ->
   db.query_one(config.conn,
-    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.user_id = ?",
+    "SELECT e.*, d.name AS department_name, p.name AS position_name, s.full_name AS supervisor_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id LEFT JOIN hr_employees s ON s.id = e.reporting_to WHERE e.user_id = ?",
     [user_id])
 
 define create_employee taking d ->
@@ -86,6 +86,25 @@ define get_clock_in_status taking company_id ->
         }
       }
   }
+
+-- Validate geofence: returns { ok, distance, radius }
+-- Uses ST_Distance_Sphere(POINT(lng,lat), POINT(lng,lat)) — MySQL 5.7+
+define check_geofence taking d ->
+  when d.lat == nothing or d.lng == nothing
+    -> map { ok: true, distance: nothing }
+    otherwise -> do {
+      let schedule = get_work_schedule(d.company_id)
+      when schedule == nothing or map.get(schedule, "geofence_radius", 0) == 0 or map.get(schedule, "office_lat", nothing) == nothing
+        -> map { ok: true, distance: nothing }
+        otherwise -> do {
+          let row = db.query_one(config.conn,
+            "SELECT ROUND(ST_Distance_Sphere(POINT(?, ?), POINT(?, ?))) AS dist",
+            [d.lng, d.lat, schedule.office_lng, schedule.office_lat])
+          let dist   = map.get(row, "dist", 0)
+          let radius = schedule.geofence_radius
+          map { ok: dist <= radius, distance: dist, radius: radius }
+        }
+    }
 
 -- Auto-close any open attendance record from a previous day (no checkout)
 define auto_close_previous_day taking employee_id ->
@@ -297,8 +316,9 @@ define generate_employee_no taking department_id ->
 define create_employee_full taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO hr_employees (company_id, department_id, position_id, user_id, employee_no, full_name, nickname, gender, email, phone, birth_place, birth_date, national_id, tax_id, marital_status, address, join_date, employment_type, contract_number, contract_start, contract_end, contract_months, bank_name, bank_account_no, bank_account_name, salary_grade, basic_salary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO hr_employees (company_id, department_id, position_id, user_id, reporting_to, employee_no, full_name, nickname, gender, email, phone, birth_place, birth_date, national_id, tax_id, marital_status, address, join_date, employment_type, contract_number, contract_start, contract_end, contract_months, bank_name, bank_account_no, bank_account_name, salary_grade, basic_salary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [d.company_id, d.department_id, d.position_id, map.get(d, "user_id", nothing),
+       map.get(d, "reporting_to", nothing),
        d.employee_no, d.full_name,
        map.get(d, "nickname", nothing),
        map.get(d, "gender", "M"),
@@ -326,8 +346,8 @@ define create_employee_full taking d ->
 
 define update_employee_full taking d ->
   db.exec(config.conn,
-    "UPDATE hr_employees SET department_id=?, position_id=?, full_name=?, nickname=?, email=?, phone=?, gender=?, birth_place=?, birth_date=?, national_id=?, tax_id=?, marital_status=?, address=?, employment_type=?, contract_number=?, contract_start=?, contract_end=?, contract_months=?, bank_name=?, bank_account_no=?, bank_account_name=?, salary_grade=?, basic_salary=?, updated_at=NOW() WHERE id=?",
-    [d.department_id, d.position_id, d.full_name,
+    "UPDATE hr_employees SET department_id=?, position_id=?, reporting_to=?, full_name=?, nickname=?, email=?, phone=?, gender=?, birth_place=?, birth_date=?, national_id=?, tax_id=?, marital_status=?, address=?, employment_type=?, contract_number=?, contract_start=?, contract_end=?, contract_months=?, bank_name=?, bank_account_no=?, bank_account_name=?, salary_grade=?, basic_salary=?, updated_at=NOW() WHERE id=?",
+    [d.department_id, d.position_id, map.get(d, "reporting_to", nothing), d.full_name,
      map.get(d, "nickname", nothing),
      map.get(d, "email", nothing),
      map.get(d, "phone", nothing),

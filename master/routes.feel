@@ -168,3 +168,108 @@ route DELETE "/api/master/positions/:id" -> do {
       respond response.ok(map { message: "position deleted" })
     }
 }
+
+-- ─── Work Schedules ──────────────────────────────────────────────────────────
+
+route GET "/api/master/work-schedules" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(service.list_work_schedules(company_id))
+}
+
+route POST "/api/master/work-schedules" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.name == nothing or body.work_start == nothing or body.work_end == nothing
+    -> respond 400 response.bad_request("company_id, name, work_start, work_end are required")
+    otherwise -> do {
+      let new_id = service.create_work_schedule(body)
+      respond 201 response.ok(service.find_work_schedule(new_id))
+    }
+}
+
+route PUT "/api/master/work-schedules/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let sched  = service.find_work_schedule(id)
+  when sched == nothing
+    -> respond 404 response.not_found("work schedule")
+    otherwise -> do {
+      when body.name == nothing or body.work_start == nothing or body.work_end == nothing
+        -> respond 400 response.bad_request("name, work_start, work_end are required")
+        otherwise -> do {
+          service.update_work_schedule(map {
+            id:                    id,
+            name:                  body.name,
+            work_start:            body.work_start,
+            work_end:              body.work_end,
+            grace_period_minutes:  map.get(body, "grace_period_minutes", 15),
+            is_default:            map.get(body, "is_default", false),
+            office_lat:            map.get(body, "office_lat", nothing),
+            office_lng:            map.get(body, "office_lng", nothing),
+            geofence_radius:       map.get(body, "geofence_radius", 0)
+          })
+          respond response.ok(service.find_work_schedule(id))
+        }
+    }
+}
+
+route DELETE "/api/master/work-schedules/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let sched  = service.find_work_schedule(id)
+  when sched == nothing
+    -> respond 404 response.not_found("work schedule")
+    otherwise -> do {
+      service.delete_work_schedule(id)
+      respond response.ok(map { message: "work schedule deleted" })
+    }
+}
+
+-- ─── Late Rules ───────────────────────────────────────────────────────────────
+
+route GET "/api/master/late-rules" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(service.list_late_rules(company_id))
+}
+
+route POST "/api/master/late-rules" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.min_minutes == nothing
+    -> respond 400 response.bad_request("company_id, min_minutes are required")
+    otherwise -> do {
+      let new_id = service.create_late_rule(body)
+      respond 201 response.ok(service.find_late_rule(new_id))
+    }
+}
+
+route PUT "/api/master/late-rules/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let rule   = service.find_late_rule(id)
+  when rule == nothing
+    -> respond 404 response.not_found("late rule")
+    otherwise -> do {
+      service.update_late_rule(map {
+        id:               id,
+        min_minutes:      body.min_minutes,
+        max_minutes:      map.get(body, "max_minutes", nothing),
+        deduction_type:   map.get(body, "deduction_type", "fixed"),
+        deduction_amount: map.get(body, "deduction_amount", 0),
+        description:      map.get(body, "description", nothing)
+      })
+      respond response.ok(service.find_late_rule(id))
+    }
+}
+
+route DELETE "/api/master/late-rules/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let rule   = service.find_late_rule(id)
+  when rule == nothing
+    -> respond 404 response.not_found("late rule")
+    otherwise -> do {
+      service.delete_late_rule(id)
+      respond response.ok(map { message: "late rule deleted" })
+    }
+}
