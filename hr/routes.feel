@@ -239,14 +239,13 @@ route POST "/api/hr/employees/:id/contract" -> do {
 -- POST /api/hr/attendance/clock-in
 -- employee_id dari body (admin) atau dari JWT via user_id → employee (mobile)
 -- Selfie: multipart field "selfie" (opsional)
+-- Late detection: compare NOW() with work_start + grace_period from master_work_schedules
 route POST "/api/hr/attendance/clock-in" -> do {
   let claims      = auth_middleware.require_auth(request)
-  let employee_id = when body.employee_id != nothing
-    -> body.employee_id
-    otherwise -> do {
-      let emp = service.find_employee_by_user_id(claims.user_id)
-      when emp != nothing -> emp.id otherwise -> nothing
-    }
+  let emp         = when body.employee_id != nothing
+    -> service.find_employee(body.employee_id)
+    otherwise -> service.find_employee_by_user_id(claims.user_id)
+  let employee_id = when emp != nothing -> emp.id otherwise -> nothing
   when employee_id == nothing
     -> respond 400 response.bad_request("employee_id is required or user has no employee profile")
     otherwise -> do {
@@ -254,6 +253,16 @@ route POST "/api/hr/attendance/clock-in" -> do {
       when existing != nothing and existing.clock_in_at != nothing
         -> respond 409 response.conflict("already clocked in today")
         otherwise -> do {
+          -- Auto-close any unclosed record from previous days
+          service.auto_close_previous_day(employee_id)
+
+          -- Determine late status + deduction from work schedule
+          let late_info  = service.get_clock_in_status(emp.company_id)
+          let mins_late  = late_info.minutes_late
+          let status     = late_info.status
+          let deduction  = late_info.deduction_amount
+
+          -- Handle selfie upload
           let f = map.get(files, "selfie", nothing)
           let selfie_path = when f != nothing
             -> do {
@@ -263,21 +272,34 @@ route POST "/api/hr/attendance/clock-in" -> do {
               save_path
             }
             otherwise -> nothing
+
           let d = map {
-            employee_id: employee_id,
-            lat:         body.lat,
-            lng:         body.lng,
-            selfie_path: selfie_path,
-            note:        body.note
+            employee_id:      employee_id,
+            lat:              body.lat,
+            lng:              body.lng,
+            selfie_path:      selfie_path,
+            status:           status,
+            minutes_late:     mins_late,
+            deduction_amount: deduction,
+            note:             body.note
           }
           let att_id = service.clock_in(d)
-          respond 201 response.ok(map { attendance_id: att_id, message: "clock-in recorded" })
+          respond 201 response.ok(map {
+            attendance_id:    att_id,
+            status:           status,
+            minutes_late:     mins_late,
+            deduction_amount: deduction,
+            message:          when status == "late"
+              -> "clock-in recorded — {mins_late} minutes late"
+              otherwise -> "clock-in recorded"
+          })
         }
     }
 }
 
 -- POST /api/hr/attendance/clock-out
 -- employee_id dari body (admin) atau dari JWT via user_id → employee (mobile)
+-- Rejects if open record is from a previous day (ganti hari = sudah auto-close).
 route POST "/api/hr/attendance/clock-out" -> do {
   let claims      = auth_middleware.require_auth(request)
   let employee_id = when body.employee_id != nothing
@@ -291,7 +313,7 @@ route POST "/api/hr/attendance/clock-out" -> do {
     otherwise -> do {
       let existing = service.get_today_attendance(employee_id)
       when existing == nothing
-        -> respond 404 response.not_found("clock-in record for today")
+        -> respond 404 response.not_found("no clock-in record for today")
         otherwise -> do {
           when existing.clock_in_at == nothing
             -> respond 409 response.conflict("not clocked in today")

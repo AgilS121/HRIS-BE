@@ -50,12 +50,59 @@ define get_today_attendance taking employee_id ->
     "SELECT * FROM hr_attendance WHERE employee_id = ? AND work_date = CURDATE()",
     [employee_id])
 
+-- Get default work schedule for a company
+define get_work_schedule taking company_id ->
+  db.query_one(config.conn,
+    "SELECT * FROM master_work_schedules WHERE company_id = ? AND is_default = 1 AND is_active = 1 LIMIT 1",
+    [company_id])
+
+-- Get late deduction rules for a company, ordered by min_minutes
+define get_late_rules taking company_id ->
+  db.query(config.conn,
+    "SELECT * FROM master_late_rules WHERE company_id = ? ORDER BY min_minutes ASC",
+    [company_id])
+
+-- Calculate late status + deduction for a clock-in at the current moment.
+-- Returns map { status, minutes_late, deduction_amount }
+define get_clock_in_status taking company_id ->
+  do {
+    let schedule = get_work_schedule(company_id)
+    when schedule == nothing
+      -> map { status: "present", minutes_late: 0, deduction_amount: 0 }
+      otherwise -> do {
+        let late_row = db.query_one(config.conn,
+          "SELECT GREATEST(0, TIMESTAMPDIFF(MINUTE, CONCAT(CURDATE(), ' ', ?), NOW()) - ?) AS minutes_late",
+          [schedule.work_start, schedule.grace_period_minutes])
+        let mins  = map.get(late_row, "minutes_late", 0)
+        let rules = get_late_rules(company_id)
+        let matched   = list.filter(rules, fn r ->
+          mins >= r.min_minutes and (r.max_minutes == nothing or mins < r.max_minutes))
+        let first_rule = list.first(matched)
+        let deduction  = when first_rule != nothing -> first_rule.deduction_amount otherwise -> 0
+        map {
+          status:           when mins > 0 -> "late" otherwise -> "present",
+          minutes_late:     mins,
+          deduction_amount: deduction
+        }
+      }
+  }
+
+-- Auto-close any open attendance record from a previous day (no checkout)
+define auto_close_previous_day taking employee_id ->
+  db.exec(config.conn,
+    "UPDATE hr_attendance SET status='no_checkout', note=COALESCE(CONCAT(note, ' | auto-closed: no checkout'), 'auto-closed: no checkout'), updated_at=NOW() WHERE employee_id=? AND work_date < CURDATE() AND clock_in_at IS NOT NULL AND clock_out_at IS NULL",
+    [employee_id])
+
 define clock_in taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO hr_attendance (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, selfie_in_path, note) VALUES (?, CURDATE(), NOW(), ?, ?, ?, ?)",
+      "INSERT INTO hr_attendance (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, selfie_in_path, status, minutes_late, deduction_amount, note) VALUES (?, CURDATE(), NOW(), ?, ?, ?, ?, ?, ?, ?)",
       [d.employee_id, map.get(d, "lat", nothing), map.get(d, "lng", nothing),
-       map.get(d, "selfie_path", nothing), map.get(d, "note", nothing)])
+       map.get(d, "selfie_path", nothing),
+       map.get(d, "status", "present"),
+       map.get(d, "minutes_late", 0),
+       map.get(d, "deduction_amount", 0),
+       map.get(d, "note", nothing)])
     db.last_id(config.conn)
   }
 

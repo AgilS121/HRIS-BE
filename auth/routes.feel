@@ -121,6 +121,28 @@ route GET "/api/auth/temp-users" -> do {
   respond response.ok(service.list_temp_users(nothing))
 }
 
+-- GET /api/auth/users — admin: list all active users (temp + permanent)
+route GET "/api/auth/users" -> do {
+  let claims = auth_middleware.require_auth(request)
+  respond response.ok(service.list_all_users(nothing))
+}
+
+-- POST /api/auth/users/:id/reset-password — admin: force-reset any user's password
+route POST "/api/auth/users/:id/reset-password" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.new_password == nothing
+    -> respond 400 response.bad_request("new_password is required")
+    otherwise -> do {
+      let user = service.get_temp_status(id)
+      when user == nothing
+        -> respond 404 response.not_found("user")
+        otherwise -> do {
+          service.reset_password(map { user_id: id, new_password: body.new_password })
+          respond response.ok(map { message: "password reset successfully" })
+        }
+    }
+}
+
 -- GET /api/auth/my-menus — permitted menus for current user
 route GET "/api/auth/my-menus" -> do {
   let claims = auth_middleware.require_auth(request)

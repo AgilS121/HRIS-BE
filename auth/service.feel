@@ -51,3 +51,18 @@ define list_temp_users taking _ ->
   db.query(config.conn,
     "SELECT u.id, u.email, u.name, u.temp_until, TIMESTAMPDIFF(HOUR, NOW(), u.temp_until) AS hours_remaining, e.employee_no, e.full_name FROM auth_users u LEFT JOIN hr_employees e ON e.user_id = u.id WHERE u.is_temp_password = 1 AND u.is_active = 1 ORDER BY u.temp_until ASC",
     [])
+
+-- List ALL active users (temp + permanent) for admin
+define list_all_users taking _ ->
+  db.query(config.conn,
+    "SELECT u.id, u.email, u.name, u.is_temp_password, u.temp_until, TIMESTAMPDIFF(HOUR, NOW(), u.temp_until) AS hours_remaining, e.employee_no, e.full_name FROM auth_users u LEFT JOIN hr_employees e ON e.user_id = u.id WHERE u.is_active = 1 ORDER BY u.name ASC",
+    [])
+
+-- Admin reset password: set new password, clear temp flags
+define reset_password taking d ->
+  do {
+    let hashed = crypto.hash_password(d.new_password)
+    db.exec(config.conn,
+      "UPDATE auth_users SET password_hash=?, is_temp_password=0, temp_until=NULL WHERE id=?",
+      [hashed, d.user_id])
+  }
