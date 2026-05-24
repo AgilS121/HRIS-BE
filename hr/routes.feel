@@ -289,45 +289,45 @@ route POST "/api/hr/attendance/clock-in" -> do {
           let geo = service.check_geofence(map { company_id: emp.company_id, lat: body.lat, lng: body.lng })
           when geo.ok == false
             -> respond 403 response.bad_request("You are {geo.distance}m from the office. Must be within {geo.radius}m to clock in.")
-            otherwise ->
+            otherwise -> do {
+              -- Determine late status + deduction from work schedule
+              let late_info  = service.get_clock_in_status(emp.company_id)
+              let mins_late  = late_info.minutes_late
+              let status     = late_info.status
+              let deduction  = late_info.deduction_amount
 
-          -- Determine late status + deduction from work schedule
-          let late_info  = service.get_clock_in_status(emp.company_id)
-          let mins_late  = late_info.minutes_late
-          let status     = late_info.status
-          let deduction  = late_info.deduction_amount
+              -- Handle selfie upload
+              let f = map.get(files, "selfie", nothing)
+              let selfie_path = when f != nothing
+                -> do {
+                  let filename  = "selfie_in_{employee_id}_{f.filename}"
+                  let save_path = "uploads/selfies/{filename}"
+                  f.save_to(save_path)
+                  save_path
+                }
+                otherwise -> nothing
 
-          -- Handle selfie upload
-          let f = map.get(files, "selfie", nothing)
-          let selfie_path = when f != nothing
-            -> do {
-              let filename  = "selfie_in_{employee_id}_{f.filename}"
-              let save_path = "uploads/selfies/{filename}"
-              f.save_to(save_path)
-              save_path
+              let d = map {
+                employee_id:      employee_id,
+                lat:              body.lat,
+                lng:              body.lng,
+                selfie_path:      selfie_path,
+                status:           status,
+                minutes_late:     mins_late,
+                deduction_amount: deduction,
+                note:             body.note
+              }
+              let att_id = service.clock_in(d)
+              respond 201 response.ok(map {
+                attendance_id:    att_id,
+                status:           status,
+                minutes_late:     mins_late,
+                deduction_amount: deduction,
+                message:          when status == "late"
+                  -> "clock-in recorded — {mins_late} minutes late"
+                  otherwise -> "clock-in recorded"
+              })
             }
-            otherwise -> nothing
-
-          let d = map {
-            employee_id:      employee_id,
-            lat:              body.lat,
-            lng:              body.lng,
-            selfie_path:      selfie_path,
-            status:           status,
-            minutes_late:     mins_late,
-            deduction_amount: deduction,
-            note:             body.note
-          }
-          let att_id = service.clock_in(d)
-          respond 201 response.ok(map {
-            attendance_id:    att_id,
-            status:           status,
-            minutes_late:     mins_late,
-            deduction_amount: deduction,
-            message:          when status == "late"
-              -> "clock-in recorded — {mins_late} minutes late"
-              otherwise -> "clock-in recorded"
-          })
         }
     }
 }
