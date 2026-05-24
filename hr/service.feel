@@ -15,6 +15,11 @@ define find_employee taking id ->
     "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.id = ?",
     [id])
 
+define find_employee_by_user_id taking user_id ->
+  db.query_one(config.conn,
+    "SELECT e.*, d.name AS department_name, p.name AS position_name FROM hr_employees e LEFT JOIN master_departments d ON e.department_id = d.id LEFT JOIN master_positions p ON e.position_id = p.id WHERE e.user_id = ?",
+    [user_id])
+
 define create_employee taking d ->
   do {
     db.exec(config.conn,
@@ -48,20 +53,27 @@ define get_today_attendance taking employee_id ->
 define clock_in taking d ->
   do {
     db.exec(config.conn,
-      "INSERT INTO hr_attendance (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, note) VALUES (?, CURDATE(), NOW(), ?, ?, ?)",
-      [d.employee_id, map.get(d, "lat", nothing), map.get(d, "lng", nothing), map.get(d, "note", nothing)])
+      "INSERT INTO hr_attendance (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, selfie_in_path, note) VALUES (?, CURDATE(), NOW(), ?, ?, ?, ?)",
+      [d.employee_id, map.get(d, "lat", nothing), map.get(d, "lng", nothing),
+       map.get(d, "selfie_path", nothing), map.get(d, "note", nothing)])
     db.last_id(config.conn)
   }
 
 define clock_out taking d ->
   db.exec(config.conn,
-    "UPDATE hr_attendance SET clock_out_at=NOW(), clock_out_lat=?, clock_out_lng=?, updated_at=NOW() WHERE employee_id=? AND work_date=CURDATE() AND clock_in_at IS NOT NULL AND clock_out_at IS NULL",
-    [map.get(d, "lat", nothing), map.get(d, "lng", nothing), d.employee_id])
+    "UPDATE hr_attendance SET clock_out_at=NOW(), clock_out_lat=?, clock_out_lng=?, selfie_out_path=?, updated_at=NOW() WHERE employee_id=? AND work_date=CURDATE() AND clock_in_at IS NOT NULL AND clock_out_at IS NULL",
+    [map.get(d, "lat", nothing), map.get(d, "lng", nothing),
+     map.get(d, "selfie_path", nothing), d.employee_id])
 
 define list_attendance taking d ->
   db.query(config.conn,
     "SELECT a.*, e.full_name AS employee_name, e.employee_no FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id WHERE e.company_id = ? AND a.work_date BETWEEN ? AND ? ORDER BY a.work_date DESC, e.full_name",
     [d.company_id, d.date_from, d.date_to])
+
+define list_my_attendance taking d ->
+  db.query(config.conn,
+    "SELECT * FROM hr_attendance WHERE employee_id = ? AND YEAR(work_date) = ? AND MONTH(work_date) = ? ORDER BY work_date DESC",
+    [d.employee_id, d.year, d.month])
 
 define find_attendance taking id ->
   db.query_one(config.conn,

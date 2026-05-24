@@ -5,6 +5,17 @@ import shared/auth_middleware
 import hr/service
 import auth/temp_service
 
+-- ─── Employee Self (mobile) ───────────────────────────────────────────────────
+
+-- GET /api/hr/employees/me — profil karyawan yang sedang login (dari JWT)
+route GET "/api/hr/employees/me" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee_by_user_id(claims.user_id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee profile for current user")
+    otherwise -> respond response.ok(employee)
+}
+
 -- ─── Employees ───────────────────────────────────────────────────────────────
 
 route GET "/api/hr/employees" -> do {
@@ -225,28 +236,58 @@ route POST "/api/hr/employees/:id/contract" -> do {
 
 -- ─── Attendance ──────────────────────────────────────────────────────────────
 
+-- POST /api/hr/attendance/clock-in
+-- employee_id dari body (admin) atau dari JWT via user_id → employee (mobile)
+-- Selfie: multipart field "selfie" (opsional)
 route POST "/api/hr/attendance/clock-in" -> do {
   let claims      = auth_middleware.require_auth(request)
-  let employee_id = body.employee_id
+  let employee_id = when body.employee_id != nothing
+    -> body.employee_id
+    otherwise -> do {
+      let emp = service.find_employee_by_user_id(claims.user_id)
+      when emp != nothing -> emp.id otherwise -> nothing
+    }
   when employee_id == nothing
-    -> respond 400 response.bad_request("employee_id is required")
+    -> respond 400 response.bad_request("employee_id is required or user has no employee profile")
     otherwise -> do {
       let existing = service.get_today_attendance(employee_id)
       when existing != nothing and existing.clock_in_at != nothing
         -> respond 409 response.conflict("already clocked in today")
         otherwise -> do {
-          let d = map { employee_id: employee_id, lat: body.lat, lng: body.lng, note: body.note }
+          let f = map.get(files, "selfie", nothing)
+          let selfie_path = when f != nothing
+            -> do {
+              let filename  = "selfie_in_{employee_id}_{f.filename}"
+              let save_path = "uploads/selfies/{filename}"
+              f.save_to(save_path)
+              save_path
+            }
+            otherwise -> nothing
+          let d = map {
+            employee_id: employee_id,
+            lat:         body.lat,
+            lng:         body.lng,
+            selfie_path: selfie_path,
+            note:        body.note
+          }
           let att_id = service.clock_in(d)
           respond 201 response.ok(map { attendance_id: att_id, message: "clock-in recorded" })
         }
     }
 }
 
+-- POST /api/hr/attendance/clock-out
+-- employee_id dari body (admin) atau dari JWT via user_id → employee (mobile)
 route POST "/api/hr/attendance/clock-out" -> do {
   let claims      = auth_middleware.require_auth(request)
-  let employee_id = body.employee_id
+  let employee_id = when body.employee_id != nothing
+    -> body.employee_id
+    otherwise -> do {
+      let emp = service.find_employee_by_user_id(claims.user_id)
+      when emp != nothing -> emp.id otherwise -> nothing
+    }
   when employee_id == nothing
-    -> respond 400 response.bad_request("employee_id is required")
+    -> respond 400 response.bad_request("employee_id is required or user has no employee profile")
     otherwise -> do {
       let existing = service.get_today_attendance(employee_id)
       when existing == nothing
@@ -258,12 +299,57 @@ route POST "/api/hr/attendance/clock-out" -> do {
               when existing.clock_out_at != nothing
                 -> respond 409 response.conflict("already clocked out today")
                 otherwise -> do {
-                  let d = map { employee_id: employee_id, lat: body.lat, lng: body.lng }
+                  let f = map.get(files, "selfie", nothing)
+                  let selfie_path = when f != nothing
+                    -> do {
+                      let filename  = "selfie_out_{employee_id}_{f.filename}"
+                      let save_path = "uploads/selfies/{filename}"
+                      f.save_to(save_path)
+                      save_path
+                    }
+                    otherwise -> nothing
+                  let d = map {
+                    employee_id: employee_id,
+                    lat:         body.lat,
+                    lng:         body.lng,
+                    selfie_path: selfie_path
+                  }
                   service.clock_out(d)
                   respond response.ok(map { message: "clock-out recorded" })
                 }
             }
         }
+    }
+}
+
+-- GET /api/hr/attendance/today — status absen hari ini (dari JWT, untuk mobile)
+route GET "/api/hr/attendance/today" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let emp    = service.find_employee_by_user_id(claims.user_id)
+  when emp == nothing
+    -> respond 404 response.not_found("employee profile for current user")
+    otherwise -> do {
+      let rec = service.get_today_attendance(emp.id)
+      respond response.ok(when rec != nothing -> rec otherwise -> map { clocked_in: false })
+    }
+}
+
+-- GET /api/hr/attendance/my?year=&month= — riwayat absen sendiri (dari JWT, untuk mobile)
+route GET "/api/hr/attendance/my" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let emp    = service.find_employee_by_user_id(claims.user_id)
+  when emp == nothing
+    -> respond 404 response.not_found("employee profile for current user")
+    otherwise -> do {
+      let year  = map.get(query, "year", nothing)
+      let month = map.get(query, "month", nothing)
+      when year == nothing or month == nothing
+        -> respond 400 response.bad_request("year and month query params are required")
+        otherwise -> respond response.ok(service.list_my_attendance(map {
+          employee_id: emp.id,
+          year:        year,
+          month:       month
+        }))
     }
 }
 
