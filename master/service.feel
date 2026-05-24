@@ -164,3 +164,44 @@ define update_late_rule taking d ->
 
 define delete_late_rule taking id ->
   db.exec(config.conn, "DELETE FROM master_late_rules WHERE id=?", [id])
+
+-- ─── Shifts ──────────────────────────────────────────────────────────────────
+
+define list_shifts taking company_id ->
+  db.query(config.conn,
+    "SELECT * FROM master_shifts WHERE company_id = ? ORDER BY start_time",
+    [company_id])
+
+define find_shift taking id ->
+  db.query_one(config.conn, "SELECT * FROM master_shifts WHERE id = ?", [id])
+
+define create_shift taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO master_shifts (company_id, name, start_time, end_time) VALUES (?, ?, ?, ?)",
+      [d.company_id, d.name, d.start_time, d.end_time])
+    db.last_id(config.conn)
+  }
+
+define update_shift taking d ->
+  db.exec(config.conn,
+    "UPDATE master_shifts SET name=?, start_time=?, end_time=?, updated_at=NOW() WHERE id=?",
+    [d.name, d.start_time, d.end_time, d.id])
+
+define delete_shift taking id ->
+  db.exec(config.conn, "DELETE FROM master_shifts WHERE id=?", [id])
+
+-- ─── Rosters ─────────────────────────────────────────────────────────────────
+
+define list_rosters taking d ->
+  db.query(config.conn,
+    "SELECT r.*, e.full_name AS employee_name, e.employee_no, dept.name AS department_name, s.name AS shift_name, s.start_time AS shift_start, s.end_time AS shift_end FROM hr_rosters r JOIN hr_employees e ON e.id = r.employee_id LEFT JOIN master_departments dept ON dept.id = e.department_id JOIN master_shifts s ON s.id = r.shift_id WHERE r.company_id = ? AND r.date BETWEEN ? AND ? ORDER BY r.date, e.full_name",
+    [d.company_id, d.date_from, d.date_to])
+
+define upsert_roster taking d ->
+  db.exec(config.conn,
+    "INSERT INTO hr_rosters (company_id, employee_id, shift_id, date) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE shift_id=VALUES(shift_id)",
+    [d.company_id, d.employee_id, d.shift_id, d.date])
+
+define delete_roster taking id ->
+  db.exec(config.conn, "DELETE FROM hr_rosters WHERE id=?", [id])

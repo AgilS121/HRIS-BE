@@ -1,0 +1,85 @@
+-- hr/overtime_routes.feel — overtime request endpoints
+
+import shared/response
+import shared/auth_middleware
+import hr/overtime_service
+import hr/service
+
+-- GET /api/hr/overtime — list all overtime requests for company (HR)
+route GET "/api/hr/overtime" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(overtime_service.list_overtime(map { company_id: company_id }))
+}
+
+-- GET /api/hr/overtime/mine — list my overtime requests (mobile)
+route GET "/api/hr/overtime/mine" -> do {
+  let claims   = auth_middleware.require_auth(request)
+  let employee = service.find_employee_by_user_id(claims.user_id)
+  when employee == nothing
+    -> respond 404 response.not_found("employee profile")
+    otherwise -> respond response.ok(overtime_service.list_my_overtime(employee.id))
+}
+
+-- POST /api/hr/overtime — submit overtime request
+route POST "/api/hr/overtime" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.employee_id == nothing or body.date == nothing or body.start_time == nothing or body.end_time == nothing or body.duration_hours == nothing
+    -> respond 400 response.bad_request("employee_id, date, start_time, end_time, duration_hours are required")
+    otherwise -> do {
+      let employee = service.find_employee(body.employee_id)
+      when employee == nothing
+        -> respond 404 response.not_found("employee")
+        otherwise -> do {
+          let d = map {
+            company_id:     employee.company_id,
+            employee_id:    body.employee_id,
+            date:           body.date,
+            start_time:     body.start_time,
+            end_time:       body.end_time,
+            duration_hours: body.duration_hours,
+            reason:         body.reason
+          }
+          let new_id = overtime_service.create_overtime(d)
+          respond response.ok(overtime_service.find_overtime(new_id))
+        }
+    }
+}
+
+-- PUT /api/hr/overtime/:id/approve
+route PUT "/api/hr/overtime/:id/approve" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let ot     = overtime_service.find_overtime(id)
+  when ot == nothing
+    -> respond 404 response.not_found("overtime request")
+    otherwise -> do {
+      overtime_service.approve_overtime(map { id: id, approved_by: claims.user_id, note: body.note })
+      respond response.ok(overtime_service.find_overtime(id))
+    }
+}
+
+-- PUT /api/hr/overtime/:id/reject
+route PUT "/api/hr/overtime/:id/reject" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let ot     = overtime_service.find_overtime(id)
+  when ot == nothing
+    -> respond 404 response.not_found("overtime request")
+    otherwise -> do {
+      overtime_service.reject_overtime(map { id: id, approved_by: claims.user_id, note: map.get(body, "note", "Rejected") })
+      respond response.ok(overtime_service.find_overtime(id))
+    }
+}
+
+-- DELETE /api/hr/overtime/:id — cancel pending request
+route DELETE "/api/hr/overtime/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let ot     = overtime_service.find_overtime(id)
+  when ot == nothing
+    -> respond 404 response.not_found("overtime request")
+    otherwise -> do {
+      overtime_service.delete_overtime(id)
+      respond response.ok(map { message: "cancelled" })
+    }
+}

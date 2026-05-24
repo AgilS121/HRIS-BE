@@ -1,0 +1,41 @@
+-- hr/overtime_service.feel — overtime request business logic
+
+import config
+
+define list_overtime taking d ->
+  db.query(config.conn,
+    "SELECT o.*, e.full_name AS employee_name, e.employee_no, d.name AS department_name, u.name AS approved_by_name FROM hr_overtime_requests o JOIN hr_employees e ON e.id = o.employee_id LEFT JOIN master_departments d ON d.id = e.department_id LEFT JOIN auth_users u ON u.id = o.approved_by WHERE o.company_id = ? ORDER BY o.date DESC, o.created_at DESC",
+    [d.company_id])
+
+define list_my_overtime taking employee_id ->
+  db.query(config.conn,
+    "SELECT o.*, u.name AS approved_by_name FROM hr_overtime_requests o LEFT JOIN auth_users u ON u.id = o.approved_by WHERE o.employee_id = ? ORDER BY o.date DESC",
+    [employee_id])
+
+define find_overtime taking id ->
+  db.query_one(config.conn,
+    "SELECT o.*, e.full_name AS employee_name, e.employee_no, e.company_id FROM hr_overtime_requests o JOIN hr_employees e ON e.id = o.employee_id WHERE o.id = ?",
+    [id])
+
+define create_overtime taking d ->
+  do {
+    db.exec(config.conn,
+      "INSERT INTO hr_overtime_requests (company_id, employee_id, date, start_time, end_time, duration_hours, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [d.company_id, d.employee_id, d.date, d.start_time, d.end_time, d.duration_hours, map.get(d, "reason", nothing)])
+    db.last_id(config.conn)
+  }
+
+define approve_overtime taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_overtime_requests SET status='approved', approved_by=?, approved_at=NOW(), note=? WHERE id=?",
+    [d.approved_by, map.get(d, "note", nothing), d.id])
+
+define reject_overtime taking d ->
+  db.exec(config.conn,
+    "UPDATE hr_overtime_requests SET status='rejected', approved_by=?, approved_at=NOW(), note=? WHERE id=?",
+    [d.approved_by, map.get(d, "note", nothing), d.id])
+
+define delete_overtime taking id ->
+  db.exec(config.conn,
+    "DELETE FROM hr_overtime_requests WHERE id = ? AND status = 'pending'",
+    [id])

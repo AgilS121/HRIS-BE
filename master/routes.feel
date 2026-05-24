@@ -273,3 +273,77 @@ route DELETE "/api/master/late-rules/:id" -> do {
       respond response.ok(map { message: "late rule deleted" })
     }
 }
+
+-- ─── Shifts ──────────────────────────────────────────────────────────────────
+
+route GET "/api/master/shifts" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(service.list_shifts(company_id))
+}
+
+route POST "/api/master/shifts" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.name == nothing or body.start_time == nothing or body.end_time == nothing
+    -> respond 400 response.bad_request("company_id, name, start_time, end_time are required")
+    otherwise -> do {
+      let new_id = service.create_shift(body)
+      respond 201 response.ok(service.find_shift(new_id))
+    }
+}
+
+route PUT "/api/master/shifts/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let shift  = service.find_shift(id)
+  when shift == nothing
+    -> respond 404 response.not_found("shift")
+    otherwise -> do {
+      when body.name == nothing or body.start_time == nothing or body.end_time == nothing
+        -> respond 400 response.bad_request("name, start_time, end_time are required")
+        otherwise -> do {
+          service.update_shift(map { id: id, name: body.name, start_time: body.start_time, end_time: body.end_time })
+          respond response.ok(service.find_shift(id))
+        }
+    }
+}
+
+route DELETE "/api/master/shifts/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let shift  = service.find_shift(id)
+  when shift == nothing
+    -> respond 404 response.not_found("shift")
+    otherwise -> do {
+      service.delete_shift(id)
+      respond response.ok(map { message: "shift deleted" })
+    }
+}
+
+-- ─── Rosters ─────────────────────────────────────────────────────────────────
+
+route GET "/api/master/rosters" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  let date_from  = map.get(query, "date_from", nothing)
+  let date_to    = map.get(query, "date_to", nothing)
+  when company_id == nothing or date_from == nothing or date_to == nothing
+    -> respond 400 response.bad_request("company_id, date_from, date_to are required")
+    otherwise -> respond response.ok(service.list_rosters(map { company_id: company_id, date_from: date_from, date_to: date_to }))
+}
+
+route POST "/api/master/rosters" -> do {
+  let claims = auth_middleware.require_auth(request)
+  when body.company_id == nothing or body.employee_id == nothing or body.shift_id == nothing or body.date == nothing
+    -> respond 400 response.bad_request("company_id, employee_id, shift_id, date are required")
+    otherwise -> do {
+      service.upsert_roster(body)
+      respond response.ok(map { message: "roster saved" })
+    }
+}
+
+route DELETE "/api/master/rosters/:id" -> do {
+  let claims = auth_middleware.require_auth(request)
+  service.delete_roster(id)
+  respond response.ok(map { message: "roster deleted" })
+}

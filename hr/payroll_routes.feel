@@ -192,6 +192,35 @@ route GET "/api/hr/payslips/:id" -> do {
     })
 }
 
+-- ─── Batch Employee Component Import ─────────────────────────────────────────
+
+-- POST /api/hr/payroll/batch-components
+-- Body: { rows: [{ employee_id, component_id, override_amount, effective_from }] }
+-- Used by Excel import feature. Inserts/updates up to 500 rows.
+route POST "/api/hr/payroll/batch-components" -> do {
+  let claims = auth_middleware.require_auth(request)
+  let rows   = map.get(body, "rows", nothing)
+  when rows == nothing
+    -> respond 400 response.bad_request("rows array is required")
+    otherwise -> do {
+      let count = list.length(rows)
+      when count == 0
+        -> respond 400 response.bad_request("rows array is empty")
+        otherwise -> do {
+          list.each(rows, function(r) ->
+            payroll_service.set_employee_component(map {
+              employee_id:     r.employee_id,
+              component_id:    r.component_id,
+              override_amount: r.override_amount,
+              effective_from:  map.get(r, "effective_from", nothing),
+              note:            map.get(r, "note", "Imported from Excel")
+            })
+          )
+          respond response.ok(map { message: "imported", count: count })
+        }
+    }
+}
+
 -- ─── BPJS & Tax Seed ──────────────────────────────────────────────────────────
 
 -- POST /api/hr/payroll/seed-bpjs?company_id=X
