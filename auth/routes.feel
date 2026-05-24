@@ -27,6 +27,11 @@ route POST "/api/auth/login" -> do {
                 -> respond 401 response.bad_request("temp_expired")
                 otherwise -> do {
                   let token = service.make_token(user)
+                  service.save_login_info(map {
+                    user_id:   user.id,
+                    device_id: map.get(body, "device_id", nothing),
+                    ip:        map.get(request, "remote_addr", nothing)
+                  })
                   respond response.ok(map {
                     token:          token,
                     is_temp:        user.is_temp_password,

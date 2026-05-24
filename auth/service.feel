@@ -58,6 +58,12 @@ define list_all_users taking _ ->
     "SELECT u.id, u.email, u.name, u.is_temp_password, u.temp_until, TIMESTAMPDIFF(HOUR, NOW(), u.temp_until) AS hours_remaining, e.employee_no, e.full_name FROM auth_users u LEFT JOIN hr_employees e ON e.user_id = u.id WHERE u.is_active = 1 ORDER BY u.name ASC",
     [])
 
+-- Save device_id and last login metadata for a user (called after successful login)
+define save_login_info taking d ->
+  db.exec(config.conn,
+    "UPDATE auth_users SET device_id=?, last_login=NOW(), last_ip=? WHERE id=?",
+    [map.get(d, "device_id", nothing), map.get(d, "ip", nothing), d.user_id])
+
 -- Admin reset password: set new password, clear temp flags
 define reset_password taking d ->
   do {

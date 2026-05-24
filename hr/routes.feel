@@ -75,6 +75,15 @@ route DELETE "/api/hr/employees/:id" -> do {
     -> respond 404 response.not_found("employee")
     otherwise -> do {
       service.terminate_employee(id)
+      service.log_audit(map {
+        company_id:  employee.company_id,
+        user_id:     claims.user_id,
+        employee_id: id,
+        action:      "terminate",
+        entity_type: "employee",
+        entity_id:   id,
+        note:        "Employee {employee.full_name} terminated"
+      })
       respond response.ok(map { message: "employee terminated" })
     }
 }
@@ -131,10 +140,20 @@ route POST "/api/hr/employees/full" -> do {
         bank_account_name: body.bank_account_name,
         salary_grade:    body.salary_grade,
         basic_salary:    body.basic_salary,
-        user_id:         user_id
+        user_id:         user_id,
+        reporting_to:    body.reporting_to
       }
       let new_id = service.create_employee_full(emp_body)
       let employee = service.find_employee(new_id)
+      service.log_audit(map {
+        company_id:  body.company_id,
+        user_id:     claims.user_id,
+        employee_id: new_id,
+        action:      "create",
+        entity_type: "employee",
+        entity_id:   new_id,
+        note:        "Employee {body.full_name} ({body.employee_no}) created"
+      })
       respond 201 response.ok(map {
         employee:          employee,
         temp_credentials:  map {
@@ -177,9 +196,19 @@ route PUT "/api/hr/employees/:id/full" -> do {
         bank_account_no:   body.bank_account_no,
         bank_account_name: body.bank_account_name,
         salary_grade:      body.salary_grade,
-        basic_salary:      body.basic_salary
+        basic_salary:      body.basic_salary,
+        reporting_to:      body.reporting_to
       }
       service.update_employee_full(d)
+      service.log_audit(map {
+        company_id:  employee.company_id,
+        user_id:     claims.user_id,
+        employee_id: id,
+        action:      "update",
+        entity_type: "employee",
+        entity_id:   id,
+        note:        "Employee {employee.full_name} profile updated"
+      })
       respond response.ok(service.find_employee(id))
     }
 }
@@ -642,4 +671,17 @@ route PUT "/api/hr/leave-requests/:id/cancel" -> do {
           respond response.ok(service.find_leave_request(id))
         }
     }
+}
+
+-- ─── Audit Log ───────────────────────────────────────────────────────────────
+
+route GET "/api/hr/audit-logs" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> respond response.ok(service.list_audit_logs(map {
+      company_id: company_id,
+      limit:      map.get(query, "limit", 100)
+    }))
 }

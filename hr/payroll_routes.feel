@@ -3,6 +3,7 @@
 import shared/response
 import shared/auth_middleware
 import hr/payroll_service
+import hr/service
 
 -- ─── Payroll Components ───────────────────────────────────────────────────────
 
@@ -134,6 +135,14 @@ route PUT "/api/hr/payroll-runs/:id/lock" -> do {
         -> respond 409 response.conflict("run is already locked or paid")
         otherwise -> do {
           payroll_service.lock_payroll_run(map { id: id, user_id: claims.user_id })
+          service.log_audit(map {
+            company_id:  run.company_id,
+            user_id:     claims.user_id,
+            action:      "lock",
+            entity_type: "payroll_run",
+            entity_id:   id,
+            note:        "Payroll {run.period_year}-{run.period_month} locked"
+          })
           respond response.ok(payroll_service.find_payroll_run(id))
         }
     }
@@ -149,6 +158,14 @@ route PUT "/api/hr/payroll-runs/:id/paid" -> do {
         -> respond 409 response.conflict("run must be locked before marking as paid")
         otherwise -> do {
           payroll_service.mark_payroll_paid(id)
+          service.log_audit(map {
+            company_id:  run.company_id,
+            user_id:     claims.user_id,
+            action:      "paid",
+            entity_type: "payroll_run",
+            entity_id:   id,
+            note:        "Payroll {run.period_year}-{run.period_month} marked as paid"
+          })
           respond response.ok(payroll_service.find_payroll_run(id))
         }
     }
@@ -173,4 +190,23 @@ route GET "/api/hr/payslips/:id" -> do {
       payslip: payslip,
       items:   payroll_service.get_payslip_items(id)
     })
+}
+
+-- ─── BPJS & Tax Seed ──────────────────────────────────────────────────────────
+
+-- POST /api/hr/payroll/seed-bpjs?company_id=X
+-- Seeds standard BPJS + PPh21 placeholder components for a company.
+-- Safe to call multiple times (uses INSERT IGNORE on unique code per company).
+route POST "/api/hr/payroll/seed-bpjs" -> do {
+  let claims     = auth_middleware.require_auth(request)
+  let company_id = map.get(query, "company_id", nothing)
+  when company_id == nothing
+    -> respond 400 response.bad_request("company_id is required")
+    otherwise -> do {
+      payroll_service.seed_bpjs_components(company_id)
+      respond response.ok(map {
+        message:    "BPJS & tax components seeded",
+        components: payroll_service.list_payroll_components(company_id)
+      })
+    }
 }

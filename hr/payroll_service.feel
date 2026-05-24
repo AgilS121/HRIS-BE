@@ -124,9 +124,26 @@ define get_payslip_items taking payslip_id ->
     "SELECT * FROM hr_payslip_items WHERE payslip_id = ? ORDER BY type DESC, sort_order, id",
     [payslip_id])
 
+-- ─── BPJS & Tax Component Seed ───────────────────────────────────────────────
+-- Seeds standard Indonesian BPJS + PPh21 placeholder components for a company.
+-- Uses INSERT IGNORE so it's idempotent — safe to call multiple times.
+
+define seed_bpjs_components taking company_id ->
+  db.exec(config.conn,
+    "INSERT IGNORE INTO hr_payroll_components
+       (company_id, code, name, type, category, calc_basis, rate, is_taxable, sort_order)
+     VALUES
+       (?, 'BPJS_KES_EE', 'BPJS Kesehatan (Employee)',    'deduction', 'bpjs_kes', 'pct_basic', 1.00, FALSE, 10),
+       (?, 'BPJS_JHT_EE', 'BPJS JHT (Employee)',          'deduction', 'bpjs_jht', 'pct_basic', 2.00, FALSE, 11),
+       (?, 'BPJS_JP_EE',  'BPJS Jaminan Pensiun (Employee)','deduction','bpjs_jp',  'pct_basic', 1.00, FALSE, 12),
+       (?, 'PPH21',       'PPh21 Estimasi',               'deduction', 'tax',      'pct_basic', 5.00, FALSE, 20)",
+    [company_id, company_id, company_id, company_id])
+
 -- ─── Generate Payslips ────────────────────────────────────────────────────────
 -- Menggunakan SQL-heavy approach untuk menghindari iterasi di level Feel.
 -- Semua kalkulasi didelegasikan ke MySQL untuk performa dan atomicity.
+-- Prorate: karyawan yang join_date berada di bulan yang sama dengan period akan
+-- mendapat gaji proporsional berdasarkan hari kalender (join_date s/d akhir bulan).
 
 define generate_payslips taking d ->
   -- d: { payroll_run_id, company_id, period_year, period_month, working_days }
@@ -141,13 +158,20 @@ define generate_payslips taking d ->
       "DELETE FROM hr_payslips WHERE payroll_run_id = ?",
       [d.payroll_run_id])
 
-    -- 1. Buat header payslip semua karyawan aktif + hitung hari absen bulan ini
+    -- 1. Buat header payslip semua karyawan aktif.
+    -- Prorate logic: jika join_date di bulan ini, basic_salary * (sisa_hari / total_hari_bulan)
     db.exec(config.conn,
       "INSERT INTO hr_payslips
-         (payroll_run_id, employee_id, basic_salary, working_days, absent_days, leave_days)
+         (payroll_run_id, employee_id, basic_salary, working_days, absent_days, leave_days, prorate_days)
        SELECT
          ?, e.id,
-         COALESCE(e.basic_salary, 0),
+         CASE
+           WHEN YEAR(e.join_date) = ? AND MONTH(e.join_date) = ?
+           THEN ROUND(COALESCE(e.basic_salary, 0) *
+             (DATEDIFF(LAST_DAY(STR_TO_DATE(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'), '%Y-%m-%d')), e.join_date) + 1) /
+             DAYOFMONTH(LAST_DAY(STR_TO_DATE(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'), '%Y-%m-%d'))))
+           ELSE COALESCE(e.basic_salary, 0)
+         END,
          ?,
          COALESCE((
            SELECT SUM(lr2.total_days)
@@ -163,10 +187,21 @@ define generate_payslips taking d ->
            FROM hr_leave_requests lr3
            WHERE lr3.employee_id = e.id AND lr3.status = 'approved'
              AND YEAR(lr3.start_date) = ? AND MONTH(lr3.start_date) = ?
-         ), 0)
+         ), 0),
+         CASE
+           WHEN YEAR(e.join_date) = ? AND MONTH(e.join_date) = ?
+           THEN DATEDIFF(LAST_DAY(STR_TO_DATE(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'), '%Y-%m-%d')), e.join_date) + 1
+           ELSE NULL
+         END
        FROM hr_employees e
        WHERE e.company_id = ? AND e.status = 'active'",
-      [d.payroll_run_id, d.working_days,
+      [d.payroll_run_id,
+       d.period_year, d.period_month,
+       d.period_year, d.period_month,
+       d.period_year, d.period_month,
+       d.working_days,
+       d.period_year, d.period_month,
+       d.period_year, d.period_month,
        d.period_year, d.period_month,
        d.period_year, d.period_month,
        d.company_id])

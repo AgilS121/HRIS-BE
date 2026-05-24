@@ -379,3 +379,22 @@ define save_contract_file taking d ->
      map.get(d, "contract_months", nothing),
      map.get(d, "contract_file", nothing),
      d.id])
+
+-- ─── Audit Log ───────────────────────────────────────────────────────────────
+
+define log_audit taking d ->
+  db.exec(config.conn,
+    "INSERT INTO hr_audit_logs (company_id, user_id, employee_id, action, entity_type, entity_id, note, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [d.company_id,
+     map.get(d, "user_id", nothing),
+     map.get(d, "employee_id", nothing),
+     d.action,
+     d.entity_type,
+     map.get(d, "entity_id", nothing),
+     map.get(d, "note", nothing),
+     map.get(d, "ip", nothing)])
+
+define list_audit_logs taking d ->
+  db.query(config.conn,
+    "SELECT al.*, u.name AS user_name FROM hr_audit_logs al LEFT JOIN auth_users u ON al.user_id = u.id WHERE al.company_id = ? ORDER BY al.created_at DESC LIMIT ?",
+    [d.company_id, map.get(d, "limit", 100)])
