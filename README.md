@@ -98,6 +98,16 @@ feel run migrate.feel        # apply semua SQL di migrations/ (001–019)
 feel run seed_admin.feel     # bikin admin@hris.local / admin123
 ```
 
+> **Jika `feel` belum di PATH**, gunakan full command berikut (sesuaikan path Python jika berbeda):
+> ```powershell
+> # Format umum
+> "C:\Users\acer\AppData\Local\Programs\Python\Python314\python.exe" "C:\Project\agil-bharata\feel\main.py" run file.feel
+>
+> # Contoh: migrate + seed
+> "C:\Users\acer\AppData\Local\Programs\Python\Python314\python.exe" "C:\Project\agil-bharata\feel\main.py" run migrate.feel
+> "C:\Users\acer\AppData\Local\Programs\Python\Python314\python.exe" "C:\Project\agil-bharata\feel\main.py" run seed_admin.feel
+> ```
+
 ### 5. Start server
 ```bash
 feel run main.feel
